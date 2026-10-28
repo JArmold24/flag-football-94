@@ -3334,6 +3334,37 @@ FF.field = (function () {
     const a = Math.atan2(vy, vx);                   // vy>0 is "up" (downfield)
     let d = Math.round(a / (Math.PI / 4)); if (d < 0) d += 8; return d % 8;
   }
+  // The football, drawn as a vector shape at device resolution so it flies smoothly: a prolate (pointed-tip) body,
+  // a darker underside and a top sheen, the two white stripes near the tips, and the laces, which roll around the
+  // ball as it spirals (spin = roll angle). len/wid in logical px, ang = screen angle of the long axis.
+  function drawFootball(x, cx, cy, len, wid, ang, spin, PX) {
+    const a = len / 2, b = wid / 2, ol = 1 / (PX || 1);
+    x.save(); x.translate(cx, cy); x.rotate(ang);
+    const body = () => { x.beginPath(); x.moveTo(-a, 0); x.bezierCurveTo(-a * 0.62, -b * 1.36, a * 0.62, -b * 1.36, a, 0); x.bezierCurveTo(a * 0.62, b * 1.36, -a * 0.62, b * 1.36, -a, 0); x.closePath(); };
+    // the light comes from above the screen: in ball space that is a direction that depends on the rotation
+    const lx = Math.sin(ang), ly = -Math.cos(ang);
+    body(); x.fillStyle = '#1a0c04'; x.lineWidth = ol * 2; x.lineJoin = 'round'; x.strokeStyle = '#1a0c04'; x.stroke();
+    body(); const g = x.createLinearGradient(lx * b * 1.1, ly * b * 1.1, -lx * b * 1.1, -ly * b * 1.1);
+    g.addColorStop(0, '#e0a068'); g.addColorStop(0.35, '#b8662a'); g.addColorStop(0.75, '#8a4618'); g.addColorStop(1, '#5c2c0c');
+    x.fillStyle = g; x.fill();
+    x.save(); body(); x.clip();
+    // stripes: two bands across the body near each tip
+    x.strokeStyle = '#f6f2ea'; x.lineWidth = Math.max(ol, len * 0.07);
+    for (const s of [-1, 1]) { const ux = s * a * 0.6; x.beginPath(); x.moveTo(ux, -b * 1.2); x.quadraticCurveTo(ux + s * a * 0.08, 0, ux, b * 1.2); x.stroke(); }
+    // laces: a seam that rolls across the body with the spiral; only drawn while it is on the visible side
+    const roll = Math.cos(spin), side = Math.sin(spin);
+    if (roll > -0.15) {
+      const v = -side * b * 0.62, half = a * 0.3, k = Math.max(0.25, roll);
+      x.globalAlpha = Math.min(1, 0.35 + roll); x.strokeStyle = '#fbf8f0'; x.lineWidth = Math.max(ol, wid * 0.11);
+      x.beginPath(); x.moveTo(-half, v); x.lineTo(half, v); x.stroke();
+      x.lineWidth = Math.max(ol, wid * 0.07);
+      for (let i = -2; i <= 2; i++) { const ux = i * half / 2.4; x.beginPath(); x.moveTo(ux, v - b * 0.22 * k); x.lineTo(ux, v + b * 0.22 * k); x.stroke(); }
+      x.globalAlpha = 1;
+    }
+    // a soft specular sheen on the lit side
+    x.globalAlpha = 0.35; x.fillStyle = '#fff1dc'; x.beginPath(); x.ellipse(lx * b * 0.45, ly * b * 0.45, a * 0.42, b * 0.22, 0, 0, Math.PI * 2); x.fill();
+    x.restore(); x.restore();
+  }
   function drawShadow(x, p, cam, vp, w, stretch) {
     x.fillStyle = 'rgba(0,0,0,0.38)';
     const ss = spriteScale(p.s);
@@ -3354,7 +3385,7 @@ FF.field = (function () {
       const jk = p.state === 'juke' && p.jukeDir ? [p.jukeDir[0], Math.max(0, 1 - p.stateT / 0.3)] : null;
       drawShadow(x, pr, cam, vp, 7, jk);
     }
-    if (ball.state === 'air' || ball.state === 'ground') { const pr = proj(ball.x, ball.y, cam, vp); drawShadow(x, pr, cam, vp, 6); }
+    if (ball.state === 'air' || ball.state === 'ground' || ball.state === 'pitch') { const pr = proj(ball.x, ball.y, cam, vp); const z = ball.z || 0; x.save(); x.globalAlpha = Math.max(0.35, 1 - z * 0.1); drawShadow(x, pr, cam, vp, Math.max(2.5, 4.6 - z * 0.3)); x.restore(); }
     // dust kicked up by cuts, spins and dives
     for (const it of items) {
       const p = it.p; let k = 0;
@@ -3395,21 +3426,33 @@ FF.field = (function () {
     // ball
     if (ball.state === 'air' || ball.state === 'ground' || ball.state === 'pitch') {
       const pr = proj(ball.x, ball.y, cam, vp);
-      const z = ball.z || 0;
-      // a pass spirals along its path (nose up on the way out, down on the way in); a loose ball tumbles
-      let ai;
+      const z = ball.z || 0, lift = z * 7 * pr.s + 3;
+      const PX = FF.PX || 1, snap = v => Math.round(v * PX) / PX;
+      const bx = snap(pr.x), by = snap(pr.y - lift);
+      let ang = 0, fore = 1, spin = 0, flying = false;
       if (ball.state === 'pitch' || (ball.state === 'air' && ball.lx != null)) {
+        flying = true;
+        // a pass points along its screen path, nose up on the way out and down on the way in (the arc's tangent)
         const tx = ball.state === 'pitch' && ball.to ? ball.to.x : ball.lx, ty = ball.state === 'pitch' && ball.to ? ball.to.y : ball.ly;
         const a = proj(ball.fx != null ? ball.fx : ball.x, ball.fy != null ? ball.fy : ball.y, cam, vp), b2 = proj(tx, ty, cam, vp);
-        let dx = b2.x - a.x, dy = b2.y - a.y; if (Math.abs(dx) + Math.abs(dy) < 1) dx = 1;
         const u = ball.T ? Math.min(1, (ball.t || 0) / ball.T) : 0.5;
-        const nose = (0.5 - u) * 0.9;                                   // radians of pitch over the flight
-        const th = Math.atan2(dy, dx); ai = FF.sprites.ballAngle(Math.cos(th), Math.sin(th) * Math.cos(nose) - Math.abs(Math.cos(th)) * Math.sin(nose) * 0.6);
-      } else ai = 1;                                                     // a dead ball lies on the turf
-      const sp = z > 1.2 ? FF.sprites.ballBig(ai) : FF.sprites.ball(ai);
-      const sc = spriteScale(pr.s) * (0.92 + z * 0.06);
-      const w = Math.round(sp.width * sc), h = Math.round(sp.height * sc);
-      x.drawImage(sp, Math.round(pr.x - w / 2), Math.round(pr.y - h / 2 - z * 7 * pr.s - 3), w, h);
+        const apexPx = ((ball.apex || 2) - 1.4) * 7 * pr.s;
+        const dx = b2.x - a.x, dy = (b2.y - a.y) - apexPx * 4 * (1 - 2 * u);   // screen tangent of the arc
+        ang = Math.atan2(dy, dx || 0.001);
+        fore = 0.8 + 0.2 * Math.abs(Math.cos(Math.atan2(b2.y - a.y, b2.x - a.x)));   // pointing up the field = foreshortened
+        spin = (ball.t || 0) * (ball.kind === 'bullet' ? 30 : 20);                   // radians: the laces roll over and over
+        if (ball.state === 'pitch') { ang = (ball.t || 0) * 9; fore = 1; spin = 0; }       // a pitch tumbles end over end
+      } else if (ball.state === 'ground') { ang = 0.25; }
+      // motion trail: the last few screen spots, fading
+      const tr = ball._trail || (ball._trail = []);
+      if (flying) { tr.push([bx, by]); if (tr.length > 5) tr.shift(); } else tr.length = 0;
+      const L = Math.max(3.2, 4.6 * spriteScale(pr.s) * (1 + Math.min(z, 6) * 0.035));   // long axis, logical px
+      if (flying && tr.length > 2) {
+        x.save(); x.lineCap = 'round';
+        for (let i = 1; i < tr.length; i++) { x.globalAlpha = 0.07 + 0.09 * (i / tr.length); x.strokeStyle = '#fff4dc'; x.lineWidth = L * 0.42 * (i / tr.length); x.beginPath(); x.moveTo(tr[i - 1][0], tr[i - 1][1]); x.lineTo(tr[i][0], tr[i][1]); x.stroke(); }
+        x.restore();
+      }
+      drawFootball(x, bx, by, L * fore, L * 0.6, ang, spin, PX);
     }
     // number under the cursor, like the reference shots, and the sprint tank under it once it is not full
     if (sim.controlled) {
@@ -4556,6 +4599,9 @@ FF.Sim = (function () {
       // ball thrown: the target tracks it, others jog toward it
       if (b.state === 'air') {
         if (b.to === p) {
+          // he reads the ball a beat after the release: until then he keeps running his route (where a perfect throw
+          // goes), so a badly led ball can end up out of his reach
+          if (b.t < 0.28 && p.state === 'route' && p.route) { this.followPath(p, p.route, 0.92, dt); return; }
           const late = FF.dist(p.x, p.y, b.lx, b.ly) / p.maxSpeed > (b.T - b.t);
           p.sprint = late; this.moveToward(p, b.lx, b.ly, 1);
           if (!p.isHuman || p !== this.controlled || this.retro) {
@@ -4713,6 +4759,7 @@ FF.Sim = (function () {
       if (close >= 2) s -= 1.8;                                   // bracketed: look elsewhere
       if (r.slot === 'C') s -= 2.0;                              // the center is the last read
       if (sep < 2.5 && depth > 10) s -= 2.5;                     // don't force a deep ball into coverage
+      { const ia = FF.clamp((99 - qb.info.ratings.acc) / 69, 0, 1.3); if (sep < 3) s -= (3 - sep) * ia * 0.3; }   // a scattershot passer knows not to thread needles
       if (depth < 4 && this.t < 1.6) s -= 2.5;                   // let routes develop
       if (depth < -3) s -= 2;
       if (ry < F.GOAL0 + 1) s -= 6;                              // don't complete passes into your own end zone
@@ -4787,13 +4834,15 @@ FF.Sim = (function () {
       const qb = this.qb, acc = qb.info.ratings.acc;
       const dd = FF.dist(qb.x, qb.y, lx, ly);
       const moving = Math.hypot(qb.vx, qb.vy) > 1.5, rusher = this.nearest(this.def, qb.x, qb.y).d < 2;
-      const rad = (0.12 + dd * 0.022) * (1.35 - acc / 99) * (moving ? 1.3 : 1) * (rusher ? 1.4 : 1);
+      const ia = FF.clamp((99 - acc) / 69, 0, 1.3);
+      const rad = (0.12 + dd * 0.03) * (0.2 + ia * 0.9) * (moving ? 1.3 : 1) * (rusher ? 1.4 : 1);
       const ang = rnd.f() * Math.PI * 2, mag = Math.sqrt(rnd.f()) * rad;
       lx += Math.cos(ang) * mag; ly += Math.sin(ang) * mag;
       let best = null, bd = 7;
       for (const r of this.off) { if (r === qb) continue; const d = FF.dist(r.x + r.vx * 0.4, r.y + r.vy * 0.4, lx, ly); if (d < bd) { bd = d; best = r; } }
       this.aimPreview = null;
       this.launch(qb, best, lx, ly, kind);
+      this.ball.off = mag;
     }
     throwTo(r, kind, lead) {
       const qb = this.qb;
@@ -4807,18 +4856,39 @@ FF.Sim = (function () {
         const q = this.predictReceiver(r, qb.isHuman ? T : T * (0.84 + 0.14 * this.diff.cpuRead)); lx = q[0]; ly = q[1];   // a CPU passer's lead is a touch short (less so on All-Pro)
       }
       if (lead) { lx += (lead.x || 0) * 2.5; ly += (lead.y || 0) * 2.5; }
-      // scatter grows with distance, moving QB, pressure, low accuracy
+      const ideal = [lx, ly];
+      // Accuracy. ia = 0 for a 99 passer, 1 for a 30. Three kinds of miss, all scaled by ia:
+      //  1) lead timing: he misjudges the receiver's speed, so the ball lands behind (the usual miss) or out in front of
+      //     him along his path, by a distance that grows with how fast the man is running;
+      //  2) a lob sails long or dies short along the throw line;
+      //  3) a general spray. Moving and pressured throws widen all three.
       const dd = FF.dist(qb.x, qb.y, lx, ly);
       const moving = Math.hypot(qb.vx, qb.vy) > 1.5;
       const rusher = this.nearest(this.def, qb.x, qb.y).d < 2;
-      let rad = (0.25 + dd * 0.035) * (1.35 - acc / 99) * (moving ? 1.4 : 1) * (rusher ? 1.5 : 1);
-      if (qb.isHuman) rad *= 0.6;          // the human's read is the skill test, not the dice: a tighter scatter
-      const ang = rnd.f() * Math.PI * 2, mag = Math.sqrt(rnd.f()) * rad;
-      lx += Math.cos(ang) * mag; ly += Math.sin(ang) * mag;
+      const ia = FF.clamp((99 - acc) / 69, 0, 1.3);
+      let k = (moving ? 1.35 : 1) * (rusher ? 1.45 : 1);
+      if (qb.isHuman) k *= 0.8;            // the human's read is the main skill test, but the rating still shows
+      const gauss = () => { const u = Math.max(1e-6, rnd.f()), v = rnd.f(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+      {
+        const spd = Math.hypot(r.vx, r.vy);
+        if (spd > 1) {
+          const ux = r.vx / spd, uy = r.vy / spd;
+          const e = (gauss() * 0.24 - 0.08) * ia * k * spd;          // seconds of lead error x speed (biased a bit behind)
+          lx += ux * e; ly += uy * e;
+        }
+        if (kind === 'lob' && dd > 1) {
+          const e = gauss() * ia * k * (0.25 + dd * 0.03);
+          lx += (lx - qb.x) / dd * e; ly += (ly - qb.y) / dd * e;
+        }
+        const rad = (0.15 + dd * 0.03) * (0.2 + ia * 0.9) * k;
+        const ang = rnd.f() * Math.PI * 2, mag = Math.sqrt(rnd.f()) * rad;
+        lx += Math.cos(ang) * mag; ly += Math.sin(ang) * mag;
+      }
       // arm strength caps distance: underthrow
       const maxD = 24 + arm * 0.26;
       if (dd > maxD) { const f = maxD / dd; lx = qb.x + (lx - qb.x) * f; ly = qb.y + (ly - qb.y) * f; }
       this.launch(qb, r, lx, ly, kind);
+      this.ball.off = FF.dist(this.ball.lx, this.ball.ly, ideal[0], ideal[1]);   // how far off the perfect spot it went
     }
     // where receiver r will be in T seconds if he keeps running his route (waypoints, cut radius, speed and
     // acceleration as followPath / integrate move him); off his route he keeps his current velocity, eased
@@ -4847,7 +4917,7 @@ FF.Sim = (function () {
     }
     launch(qb, r, lx, ly, kind) {
       const b = this.ball;
-      b.state = 'air'; b.holder = null; qb.hasBall = false; b.fx = qb.x; b.fy = qb.y; b.lx = lx; b.ly = ly; b.to = r; b.kind = kind; b.t = 0;
+      b.state = 'air'; b.holder = null; qb.hasBall = false; b.fx = qb.x; b.fy = qb.y; b.lx = lx; b.ly = ly; b.to = r; b.kind = kind; b.t = 0; b.off = 0;
       const dd = FF.dist(qb.x, qb.y, lx, ly);
       b.T = kind === 'bullet' ? dd / 26 + 0.1 : dd / 16 + 0.2;
       b.apex = kind === 'bullet' ? 1.6 + dd * 0.03 : 2.8 + dd * 0.11;
@@ -5132,6 +5202,9 @@ FF.Sim = (function () {
       }
       const hnd = rec.info.ratings.hnd / 99;
       let pCatch = 0.86 + hnd * 0.14 + (b.kind === 'bullet' ? -0.03 : 0.02) + (rd > 0.8 ? -0.08 : 0) + (rec.isHuman ? diff.humanCatch : diff.cpuCatch);
+      const offT = FF.clamp((b.off || 0) - 0.45, 0, 3);                 // an off-target ball: he had to adjust for it
+      const pClean = pCatch;
+      pCatch -= offT * 0.18;
       if (FF.stadium.weather === 'rain') pCatch -= 0.05; else if (FF.stadium.weather === 'snow') pCatch -= 0.03;   // a wet ball
       if (def) {
         // A contested ball is decided by the geometry of the throw, not a dice roll: who is nearer the ball, where
@@ -5148,6 +5221,7 @@ FF.Sim = (function () {
         if (def.state === 'swat') adv -= 0.35; if (rec.state === 'dive') adv += 0.15;
         adv += (rec.isHuman ? diff.humanCatch : diff.cpuCatch) * 2 - (def.isHuman ? 0 : diff.cpuCatch);
         adv += (rnd.f() - 0.5) * 0.3;
+        adv -= offT * 0.08;                       // a ball he has to wait or turn back for lets the defender in
         adv = adv * close + (1 - close) * 1;      // a defender a stride away barely matters
         this.dbgCatch.adv = adv; this.dbgCatch.rel = under ? 'under' : over ? 'over' : 'tight';
         if (adv < -0.55) {   // the defender beat him to it: a pick when he is squared up, a breakup otherwise
@@ -5161,7 +5235,9 @@ FF.Sim = (function () {
         }
         if (b.kind === 'lob' && over) rec.catchKindHint = 'over';   // went up and got it over the top
       }
-      if (rnd.chance(pCatch)) this.catchBall(rec);
+      const u = rnd.f();
+      if (u < pCatch) this.catchBall(rec);
+      else if (u < pClean && offT > 0) this.end({ type: 'incomplete', spot: this.los, offTarget: true, rec });   // the throw's fault, not his
       else { this.stat(rec, 'drops'); this.end({ type: 'incomplete', spot: this.los, drop: true, rec }); }
     }
     catchBall(rec) {
@@ -5715,7 +5791,7 @@ FF.Game = (function () {
         }
         case 'sack': { const y = applyYards(r.spot); lines = ['SACKED BY ' + num(r.puller), gainText(y)]; this.teamStats[defIdx].sacks++; nk = 'sack'; break; }
         case 'incomplete': {
-          lines = ['PASS INCOMPLETE', r.drop ? 'DROPPED BY ' + num(r.rec) : r.deflected ? 'BROKEN UP BY ' + num(r.deflected) : r.oob ? 'OUT OF BOUNDS' : (r.to ? 'INTENDED FOR ' + num(r.to) : 'THROWN AWAY')];
+          lines = ['PASS INCOMPLETE', r.drop ? 'DROPPED BY ' + num(r.rec) : r.offTarget ? 'OFF TARGET FOR ' + num(r.rec) : r.deflected ? 'BROKEN UP BY ' + num(r.deflected) : r.oob ? 'OUT OF BOUNDS' : (r.to ? 'INTENDED FOR ' + num(r.to) : 'THROWN AWAY')];
           if (this.inTwoMinute()) stopClock = true;
           nk = r.drop ? 'drop' : r.deflected ? 'deflect' : (r.oob || !r.to) ? 'away' : 'inc';
           break;

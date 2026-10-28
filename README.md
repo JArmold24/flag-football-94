@@ -1,4 +1,4 @@
-# Flag Football '94 — PC & phone build (v0.24)
+# Flag Football '94 — PC & phone build (v0.25)
 
 A 16-bit style 5-on-5 flag football game built from the design document, with the
 Madden '94 play-calling grid, passing windows, and camera, plus a **Superstar** career mode.
@@ -118,6 +118,19 @@ Rebuild the sheet with `cd tools/prerender && npm install && node render.js` (ne
 - Score strip with team emblems and a possession arrow; receiver windows centered; dust on cuts,
   spins and dives; the pulled flag tumbles away; screen shake on a sack; scene fades; play-call
   diagrams no longer spill out of their tiles; menus sit over a dusk stadium.
+
+## v0.25 — accuracy that matters, a ball that looks like a ball
+
+- **QB accuracy now changes where the ball goes.** Before, the lead was perfect at every rating, and accuracy only added a small random spray (about 0.4 yd at a 30 rating). The receiver also ran straight to wherever the ball landed, so the rating barely changed anything. Now a low rating misses in three football ways:
+  - Misjudging the receiver's speed: the ball lands behind him (the usual miss) or out in front, and the error grows with how fast he's running.
+  - Lobs that sail long or die short.
+  - A wider general spray.
+
+  Moving and pressured throws make all three worse. The receiver reads the ball a beat after release (0.28 s), so a badly led ball can end up out of his reach. An off-target ball he does reach is harder to catch and gives the defender a better chance. Those incompletions now show as **OFF TARGET FOR #n** instead of being blamed on the receiver as drops. Low-accuracy CPU passers also shy away from tight windows.
+- **Measured:**
+  - Average landing error vs. a perfect throw: 0 yd at 99, about 0.4 at 85, 0.8 at 70, 1.4 at 50, 2.0 at 30 (human passer; the CPU's is about 25% wider).
+  - CPU-vs-CPU completion rate by forced accuracy: 72% at 99, 69% at 74, 64% at 55, 60% at 35.
+- **The football in flight is drawn as a smooth shape** instead of a scaled-up 11-pixel sprite. It has a pointed-tip body, shading, white stripes, and laces that roll around as it spirals. It's sized closer to a real ball next to the players, moves and rotates smoothly instead of in pixel steps, leaves a faint motion trail, and its shadow shrinks and fades as it climbs. A pitch tumbles end over end.
 
 ## v0.24 — full-width phones, glass buttons, a QB who leads his man
 
