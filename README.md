@@ -1,4 +1,4 @@
-# Flag Football '94 — PC & phone build (v0.25)
+# Flag Football '94 — PC & phone build (v0.26)
 
 A 16-bit style 5-on-5 flag football game built from the design document, with the
 Madden '94 play-calling grid, passing windows, and camera, plus a **Superstar** career mode.
@@ -118,6 +118,36 @@ Rebuild the sheet with `cd tools/prerender && npm install && node render.js` (ne
 - Score strip with team emblems and a possession arrow; receiver windows centered; dust on cuts,
   spins and dives; the pulled flag tumbles away; screen shake on a sack; scene fades; play-call
   diagrams no longer spill out of their tiles; menus sit over a dusk stadium.
+
+## v0.26 — every rating pulls its weight; new defaults
+
+**Defaults:** new players start on **Classic '94** with **TAP RECEIVER** passing and **READ AIDS off** (a plain white ring under the receiver you're targeting). Saved settings are not changed.
+
+**Rating audit.** Each rating was tested on the same 1,200 seeded CPU-vs-CPU plays, once with a group of players set to 40 and once at 95. Before this version:
+
+- **Strong:** SPEED, AGILITY (ball carriers), HANDS, COVERAGE, FLAG PULL, defensive SPEED, QB AGILITY (pocket feel: sacks 8.3% at 40, 0.5% at 95), ACCURACY (v0.25).
+- **Did nothing:** ARM, ROUTES, RUSH.
+  - ARM only capped max distance, which almost no throw on a 50-yard field reaches.
+  - ROUTES only changed how early a receiver started his cut.
+  - RUSH slowed rushers down at every rating, and sacks didn't change.
+- **Weak:** STAMINA, defensive AGILITY.
+
+**Fixes:**
+
+- **ARM** sets ball speed: a bullet travels about 23 yd/s at 40 and 28 at 95, a lob about 15 and 17. Past the QB's comfortable range (about 22 yd at 40, 33 at 95) his throws spray more.
+- **ROUTES:** a crisp route runner leaves his man reading the play late, carries him further past the break, and delays the defender's reaction to the ball. A sloppy one bleeds speed through sharp breaks.
+- **RUSH** sets the rusher's get-off and closing speed.
+- **STAMINA:** the per-play sprint budget now runs from about 2.2 s (40) to 3.4 s (95), and a gassed player runs heavy-legged until he recovers.
+- **Defensive AGILITY:** how badly a defender bites on a juke or spin now depends on his agility against the carrier's, and agile defenders pull flags a bit more often.
+
+| Rating (40 → 95) | Before | After |
+|---|---|---|
+| ARM (QB) | 70% → 70% completions, 6.3 → 6.4 yd/play | 67% → 76% completions, 5.8 → 7.2 yd/play, sacks 3.5% → 1.7% |
+| ROUTES (receivers) | 71% → 69% completions | 70% → 76% completions, INT 2.3% → 0.9% |
+| RUSH (defense) | sacks 1.5% → 0.8% | sacks 1.1% → 6.9% |
+| AGILITY (defense) | 6.9 → 6.1 yd/play | 7.1 → 5.9 yd/play, run 4.4 → 2.9 yd |
+
+Overall CPU-vs-CPU completion rate is 64% at Rookie, 72% at Pro and 78% at All-Pro.
 
 ## v0.25 — accuracy that matters, a ball that looks like a ball
 
