@@ -1,4 +1,4 @@
-# Flag Football '94 — PC & phone build (v0.26)
+# Flag Football '94 — PC & phone build (v0.27)
 
 A 16-bit style 5-on-5 flag football game built from the design document, with the
 Madden '94 play-calling grid, passing windows, and camera, plus a **Superstar** career mode.
@@ -118,6 +118,25 @@ Rebuild the sheet with `cd tools/prerender && npm install && node render.js` (ne
 - Score strip with team emblems and a possession arrow; receiver windows centered; dust on cuts,
   spins and dives; the pulled flag tumbles away; screen shake on a sack; scene fades; play-call
   diagrams no longer spill out of their tiles; menus sit over a dusk stadium.
+
+## v0.27 — a broadcast banner that knows what happened
+
+The post-play banner is rewritten around what actually happened on the play:
+- **Headline** (big): COMPLETE, DIVING CATCH!, ONE-HANDED!, BIG PLAY!, SCRAMBLE, QB KEEPER, BREAKAWAY!, STUFFED!, SACKED!, INCOMPLETE, INTERCEPTED!, PICK SIX!, TOUCHDOWN!, SAFETY!, GOOD! / NO GOOD. On an ordinary run, the runner's name.
+- **Detail line** (small), with names instead of bare numbers: "HAWTHORNE TO TORRES, 13 YARDS", "UP THE MIDDLE FOR 4 YARDS", "BRANDT DROPS ELLIS, A LOSS OF 5". On a miss it says how the ball missed: THROWN BEHIND / LED TOO FAR / SAILED OVER / UNDERTHROWN.
+- **Tag:** FIRST DOWN, 3RD/4TH DOWN CONVERSION, TURNOVER ON DOWNS, TURNOVER, and on scores GO-AHEAD SCORE / TAKES THE LEAD / TIES THE GAME.
+- **Color commentary** is picked from the most notable thing on the play:
+  - missed flag pulls (naming the defender who missed)
+  - yards after the catch vs. air yards
+  - a throw under pressure, or a QB extending the play
+  - a conversion on the last down, or how many yards short on a turnover on downs
+  - a held-too-long sack
+  - how an interception happened (jumped route, won the jump ball, made him pay for a bad throw)
+  - late lead changes, smart sideline exits in a close game near the end
+
+  Lines aren't repeated until their pool runs dry.
+- The interception banner no longer says "RETURNED TO THE OWN 20", which was wrong and misleading because by default the ball restarts at the 15.
+- **Layout:** the headline is always the big line and the detail always the small one (no more sizes jumping with string length). The commentary uses the regular font so it reads on a phone.
 
 ## v0.26 — every rating pulls its weight; new defaults
 

@@ -3960,6 +3960,7 @@ FF.Sim = (function () {
       this.cpuSnapAt = 1.0 + rnd.f() * 1.2;
       this.retro = !!this.retro; this.viewRot = 0; this.retroCmd = null; this.aimPreview = null; this.lobMode = false; this.qbScramble = false;   // RETRO SIDELINE play style
       this.stats = this.stats || {};
+      this.pf = { broken: 0, missedBy: null, jukes: 0, spins: 0, catchY: null, throwT: null, pressured: false, presser: null, qbRan: false, miss: null, intHow: null, lob: false };   // per-play facts for the broadcast banner
       this.build();
     }
 
@@ -4553,7 +4554,7 @@ FF.Sim = (function () {
       if (input.pressed('B') && p.spinCd <= 0 && p.state === 'carry') this.spin(p);
     }
     juke(p, dir) {
-      this.setState(p, 'juke', true); p.jukeDir = dir; p.jukeCd = 0.7; p.pose = null;
+      this.setState(p, 'juke', true); p.jukeDir = dir; p.jukeCd = 0.7; p.pose = null; if (p.hasBall) this.pf.jukes++;
       // defenders closing on him commit to where he was going: reaction delay scaled by coverage
       const ahead = { x: p.x + p.vx * 0.3 + dir[0] * -0.5, y: p.y + p.vy * 0.3 };
       for (const d of this.players) {
@@ -4582,7 +4583,7 @@ FF.Sim = (function () {
         const f = norm(p.vx, p.vy); const to = norm(n.p.x - p.x, n.p.y - p.y);
         if (f[0] * to[0] + f[1] * to[1] > 0.5) { this.end({ type: 'penalty', name: 'FLAG GUARDING', against: p.side, spot: p.y, yards: 10, lossOfDown: true }); return; }
       }
-      this.setState(p, 'spin', true); p.spinCd = 1.2; p.pose = 'spin';
+      this.setState(p, 'spin', true); p.spinCd = 1.2; p.pose = 'spin'; if (p.hasBall) this.pf.spins++;
       for (const d of this.players) { if (d.side === p.side || d.isHuman || d.state === 'stumble') continue; if (FF.dist(d.x, d.y, p.x, p.y) < 2.5) { d.biteUntil = this.t + Math.max(0.05, 0.15 + (1 - d.info.ratings.cov / 99) * 0.15 + (p.info.ratings.agi - d.info.ratings.agi) / 99 * 0.2); d.biteTarget = { x: p.x + p.vx * 0.25, y: p.y + p.vy * 0.25 }; } }
       this.sfxQ('juke');
     }
@@ -4722,7 +4723,7 @@ FF.Sim = (function () {
         const thr = 4.4 - this.t * 0.75 + this.diff.cpuQbNoise * (rnd.f() - 0.5);
         if ((pressure || this.t > 2.0) && bestS < thr && this.qbMayRun() && p.info.ratings.spd >= 68 && rnd.chance(0.25 + (p.info.ratings.spd - 68) / 60)) {
           // tuck it and run: a fast quarterback takes off when the rusher has crossed the line
-          p.scrambleT = 0.7; p.decideT = 0.7; p.scrambleTot = 0;
+          p.scrambleT = 0.7; p.decideT = 0.7; p.scrambleTot = 0; this.pf.qbRan = true;
         }
         if (p.scrambleT > 0) { /* handled below */ }
         else if (best && (bestS >= thr || forced)) {
@@ -4798,7 +4799,7 @@ FF.Sim = (function () {
       else { p.wantDir = [0, 0]; p.wantSpeed = 0; }
       if (cmd.release && cmd.release.valid) {
         if (cmd.release.backward) {
-          if (this.qbMayRun()) { this.qbScramble = true; this.messages.push({ text: 'QB TAKES OFF', t: 0.8 }); }
+          if (this.qbMayRun()) { this.qbScramble = true; this.pf.qbRan = true; this.messages.push({ text: 'QB TAKES OFF', t: 0.8 }); }
           else { this.messages.push({ text: this.inNoRunZone() ? 'NO-RUN ZONE: PASS ONLY' : 'QB MAY NOT RUN', t: 1.0 }); this.sfxQ('buzz'); }
         } else this.throwSpot(cmd.release.lx, cmd.release.ly, kind);
       }
@@ -4896,6 +4897,12 @@ FF.Sim = (function () {
       if (dd > maxD) { const f = maxD / dd; lx = qb.x + (lx - qb.x) * f; ly = qb.y + (ly - qb.y) * f; }
       this.launch(qb, r, lx, ly, kind);
       this.ball.off = FF.dist(this.ball.lx, this.ball.ly, ideal[0], ideal[1]);   // how far off the perfect spot it went
+      if (this.ball.off > 0.6) {   // describe the miss: behind / ahead of him, or long / short of him
+        const ex = this.ball.lx - ideal[0], ey = this.ball.ly - ideal[1], sp = Math.hypot(r.vx, r.vy);
+        const tl = Math.hypot(ideal[0] - qb.x, ideal[1] - qb.y) || 1, along = (ex * (ideal[0] - qb.x) + ey * (ideal[1] - qb.y)) / tl;
+        const run = sp > 1 ? (ex * r.vx + ey * r.vy) / sp : 0;
+        this.pf.miss = Math.abs(run) >= Math.abs(along) ? (run < 0 ? 'behind' : 'ahead') : (along > 0 ? 'long' : 'short');
+      }
     }
     // where receiver r will be in T seconds if he keeps running his route (waypoints, cut radius, speed and
     // acceleration as followPath / integrate move him); off his route he keeps his current velocity, eased
@@ -4932,6 +4939,7 @@ FF.Sim = (function () {
       b.apex = kind === 'bullet' ? 1.6 + dd * 0.03 : 2.8 + dd * 0.11;
       b.x = qb.x; b.y = qb.y; b.z = 1.4;
       this.thrown = true; this.windowsOpen = false; this.fieldTargets = false; this.passClock = null; this.callForBall = 0;
+      { const n = this.nearest(this.def, qb.x, qb.y); this.pf.throwT = this.t; this.pf.lob = kind === 'lob'; if (n.p && n.d < 2.4) { this.pf.pressured = true; this.pf.presser = n.p; } if (this.qbScramble || (qb.scrambleTot || 0) > 0.4) this.pf.qbRan = true; }
       const near = this.def.some(d => FF.dist(d.x, d.y, qb.x, qb.y) < 1.7);
       this.setState(qb, 'throw'); qb.pose = near && rnd.chance(0.7) ? 'throwJump' : 'throw'; qb.frame = 1; qb.animT = 0;
       this.stat(qb, 'passAtt'); if (r) this.stat(r, 'targets');
@@ -5173,7 +5181,7 @@ FF.Sim = (function () {
             d.laneChecked = b;
             const cov = d.info.ratings.cov / 99;
             const r = rnd.f();
-            if (r < 0.05 + cov * 0.08 + (d.state === 'swat' ? 0.15 : 0)) { this.dbgIntSrc = 'lane'; this.interception(d); return; }
+            if (r < 0.05 + cov * 0.08 + (d.state === 'swat' ? 0.15 : 0)) { this.dbgIntSrc = 'lane'; this.pf.intHow = 'lane'; this.interception(d); return; }
             if (r < 0.4 + cov * 0.3 + (d.state === 'swat' ? 0.2 : 0)) { this.dbgDeflSrc = 'lane'; this.deflect(d); return; }
           }
         }
@@ -5205,7 +5213,7 @@ FF.Sim = (function () {
         if (def && dd < 0.9) {
           const cov = def.info.ratings.cov / 99;
           const pInt = 0.10 + cov * 0.15 + (def.state === 'swat' ? 0.15 : 0) + (def.isHuman ? 0 : diff.cpuCatch);
-          if (rnd.chance(pInt)) { this.dbgIntSrc = 'norec'; this.interception(def); return; }
+          if (rnd.chance(pInt)) { this.dbgIntSrc = 'norec'; this.pf.intHow = 'norec'; this.interception(def); return; }
         }
         this.end({ type: 'incomplete', spot: this.los }); return;
       }
@@ -5235,7 +5243,7 @@ FF.Sim = (function () {
         this.dbgCatch.adv = adv; this.dbgCatch.rel = under ? 'under' : over ? 'over' : 'tight';
         if (adv < -0.55) {   // the defender beat him to it: a pick when he is squared up, a breakup otherwise
           const pInt = 0.22 + cov * 0.3 + (def.state === 'swat' ? 0.1 : 0) + (dd < 0.6 ? 0.1 : 0);
-          if (rnd.chance(pInt)) { this.dbgIntSrc = 'contested'; this.interception(def); return; }
+          if (rnd.chance(pInt)) { this.dbgIntSrc = 'contested'; this.pf.intHow = 'contested'; this.interception(def); return; }
           this.dbgDeflSrc = 'contested'; this.deflect(def); return;
         }
         if (adv < 0.2) {   // a true jump ball: the breakup odds slide with the advantage
@@ -5252,7 +5260,7 @@ FF.Sim = (function () {
     catchBall(rec) {
       const b = this.ball;
       const wasDiving = rec.state === 'dive' || rec.pose === 'dive';
-      b.state = 'held'; b.holder = rec; rec.hasBall = true; b.z = 0;
+      b.state = 'held'; b.holder = rec; rec.hasBall = true; b.z = 0; this.pf.catchY = rec.y;
       this.stat(this.qb, 'passCmp'); this.stat(rec, 'recs'); rec.pose = 'catch'; rec.animT = 0;
       { const fv = [Math.cos(rec.facing * Math.PI / 4), Math.sin(rec.facing * Math.PI / 4)]; const bd = norm(this.ball.lx - this.ball.fx, this.ball.ly - this.ball.fy); rec.catchKind = wasDiving ? 'dive' : rec.catchKindHint === 'over' ? 'over' : (fv[0] * bd[0] + fv[1] * bd[1] > 0.45) ? 'over' : this.ball.kind === 'bullet' ? 'chest' : (rec.sprint && rnd.chance(0.3)) ? 'one' : 'high'; rec.catchKindHint = null; }
       rec.vx *= 0.3; rec.vy *= 0.3; rec.catchHold = 0.18;   // gather the ball before turning upfield
@@ -5329,7 +5337,7 @@ FF.Sim = (function () {
         if (this.attackDir < 0 && spot > F.GOAL1) { this.end({ type: 'safety', spot, puller: d, defense: true }); return; }
         this.end({ type: 'pull', spot, puller: d });
       } else {
-        this.stat(d, 'missedPulls'); this.stat(c, 'broken');
+        this.stat(d, 'missedPulls'); this.stat(c, 'broken'); this.pf.broken++; this.pf.missedBy = d;
         // A miss on a runner going by at speed is a whiff: the defender is off balance and the
         // runner is gone. A miss on a slow or head-on carrier (a QB in the pocket, a runner
         // squaring up) is a swipe: a short recovery and one more grab. Better pullers recover faster.
@@ -5350,6 +5358,7 @@ FF.Sim = (function () {
       this.phase = 'dead'; this.deadT = 0; this.result = res; this.windowsOpen = false; this.fieldTargets = false;
       res.los = this.los; res.attackDir = this.attackDir; res.carrier = this.carrier || (res.type === 'oob' && this.qb.hasBall ? this.qb : null); res.penaltyPre = this.penalty;
       res.thrown = this.thrown; res.handedOff = this.handedOff; res.to = this.ball.to; res.intBy = this.intBy || null;
+      res.f = Object.assign({}, this.pf, { t: this.t, qb: this.qb, kind: this.ball.kind, catchKind: res.carrier && res.carrier.catchKind, startX: res.carrier ? (res.carrier.ox != null ? res.carrier.ox : null) : null, endX: res.carrier ? res.carrier.x : null, intY: this.intSpot });
       // yardage
       if (res.type === 'pull' || res.type === 'oob' || res.type === 'td' || res.type === 'sack' || res.type === 'safety') {
         res.yards = this.attackDir > 0 ? Math.round(res.spot - this.los) : null;
@@ -5764,12 +5773,10 @@ FF.Game = (function () {
       if (r.type === 'sack' || r.type === 'safety') this.cam.shake = 0.3;
       const offIdx = this.possession, defIdx = 1 - this.possession;
       const ts = this.teamStats[offIdx];
-      let lines = [], tag = null, next = 'playcall';
+      let tag = null, ev = null;
       let stopClock = false;
-      const num = p => '#' + p.info.num;
-      const gainText = y => y > 0 ? 'GAIN OF ' + y : y < 0 ? 'LOSS OF ' + (-y) : 'NO GAIN';
-      // pre-snap defensive penalty nullifies the play
-      let nk = null;   // commentary key
+      // the situation at the snap, for the broadcast banner
+      const ctx = { down: this.down, last: this.down >= this.downsAllowed(), togo: Math.max(1, Math.round(this.gainY() - this.los)), toGoal: this.target === 'goal', score: this.score.slice(), offIdx, defIdx };
       // a live-ball foul (illegal rush) is declined when the offense did better than the 5 yards on the play
       if (r.penaltyPre && r.penaltyPre.live) {
         const gain = r.type === 'td' && !r.defense ? 99 : (r.type === 'pull' || r.type === 'oob') && !r.intBy ? Math.round(r.spot - this.los) : -99;
@@ -5778,8 +5785,7 @@ FF.Game = (function () {
       if (r.penaltyPre) {
         const pp = r.penaltyPre;
         this.penalize(pp.name, pp.against, pp.yards, true);
-        lines = [pp.name, '5 YARD PENALTY']; this.showBanner(lines, 'penalty', null, this.commentary('penalty'));
-        this.setState('result'); return;
+        this.call('prePenalty', r, ctx, { pp }); this.setState('result'); return;
       }
       if (this.conversion) { this.resolveConversion(r); return; }
       ts.plays++;
@@ -5789,62 +5795,52 @@ FF.Game = (function () {
         this.los = FF.clamp(Math.round(spot * 2) / 2, 1, F.GOAL1);
         return yards;
       };
+      let y = 0;
       switch (r.type) {
         case 'pull': case 'oob': {
-          const y = applyYards(r.spot);
-          const who = r.carrier;
-          lines = [r.thrown ? 'PASS TO ' + num(who) : 'RUN BY ' + num(who), (r.type === 'oob' ? 'OUT OF BOUNDS - ' : '') + gainText(y)];
-          if (r.catchDown) lines[1] = 'DIVING CATCH - ' + gainText(y);
+          y = applyYards(r.spot);
           if (r.type === 'oob' && this.inTwoMinute()) stopClock = true;
           if (r.puller) this.teamStats[defIdx].pulls++;
-          nk = r.catchDown ? 'dive' : r.type === 'oob' ? 'oob' : y >= 15 ? 'big' : y > 0 ? 'gain' : 'stuff';
-          break;
+          ev = 'gain'; break;
         }
-        case 'sack': { const y = applyYards(r.spot); lines = ['SACKED BY ' + num(r.puller), gainText(y)]; this.teamStats[defIdx].sacks++; nk = 'sack'; break; }
-        case 'incomplete': {
-          lines = ['PASS INCOMPLETE', r.drop ? 'DROPPED BY ' + num(r.rec) : r.offTarget ? 'OFF TARGET FOR ' + num(r.rec) : r.deflected ? 'BROKEN UP BY ' + num(r.deflected) : r.oob ? 'OUT OF BOUNDS' : (r.to ? 'INTENDED FOR ' + num(r.to) : 'THROWN AWAY')];
-          if (this.inTwoMinute()) stopClock = true;
-          nk = r.drop ? 'drop' : r.deflected ? 'deflect' : (r.oob || !r.to) ? 'away' : 'inc';
-          break;
-        }
-        case 'passclock': lines = ['PASS CLOCK EXPIRED', 'LOSS OF DOWN']; nk = 'passclock'; break;
-        case 'drop': lines = r.text || ['DROPPED PITCH', 'DEAD BALL']; this.los = FF.clamp(Math.round(r.spot), 1, 59); break;
+        case 'sack': { y = applyYards(r.spot); this.teamStats[defIdx].sacks++; ev = 'sack'; break; }
+        case 'incomplete': { if (this.inTwoMinute()) stopClock = true; ev = 'inc'; break; }
+        case 'passclock': ev = 'passclock'; break;
+        case 'drop': ev = 'pitch'; this.los = FF.clamp(Math.round(r.spot), 1, 59); break;
         case 'td': {
           if (r.defense) { // interception return
             this.score[defIdx] += 6; this.teamStats[defIdx].tds++; this.teamStats[defIdx].ints++;
-            lines = ['INTERCEPTION', 'RETURNED FOR TOUCHDOWN!'];
-            this.showBanner(lines, 'td', null, this.commentary('intTD')); this.sfx.push('crowd'); if (FF.audio) FF.audio.hype(defIdx === 0 ? 1 : 0.5, 1.5);
+            this.call('pick6', r, ctx, { after: this.score.slice() }); this.sfx.push('crowd'); if (FF.audio) FF.audio.hype(defIdx === 0 ? 1 : 0.5, 1.5);
             this.pendingConversion = defIdx; this.setState('result'); stopClock = true; this.clockRunning = false; return;
           }
-          const y = applyYards(F.GOAL1);
+          y = applyYards(F.GOAL1);
           this.score[offIdx] += 6; ts.tds++;
-          lines = ['TOUCHDOWN!', num(r.scorer) + ' - ' + y + ' YARDS'];
-          this.showBanner(lines, 'td', null, this.commentary(y >= 25 ? 'tdLong' : 'td')); this.sfx.push('crowd'); if (FF.audio) FF.audio.hype(offIdx === 0 ? 1 : 0.5, 2);
+          this.call('td', r, ctx, { y, after: this.score.slice() }); this.sfx.push('crowd'); if (FF.audio) FF.audio.hype(offIdx === 0 ? 1 : 0.5, 2);
           this.pendingConversion = offIdx; this.clockRunning = false; this.setState('result'); this.awardXP(); return;
         }
         case 'safety': {
-          if (r.defense) { this.score[offIdx] += 2; lines = ['SAFETY!', 'RETURN STOPPED IN END ZONE']; this.showBanner(lines, 'td', null, this.commentary('safety')); this.afterScoreNext = { team: offIdx }; }
-          else { this.score[defIdx] += 2; lines = ['SAFETY!', 'PULLED IN THE END ZONE']; this.showBanner(lines, 'td', null, this.commentary('safety')); this.afterScoreNext = { team: defIdx }; }
+          if (r.defense) { this.score[offIdx] += 2; this.afterScoreNext = { team: offIdx }; }
+          else { this.score[defIdx] += 2; this.afterScoreNext = { team: defIdx }; }
+          this.call('safety', r, ctx, {});
           this.clockRunning = false; this.setState('result'); this.awardXP(); return;
         }
         case 'penalty': {
-          lines = [r.name, '10 YARDS - LOSS OF DOWN'];
-          this.los = FF.clamp(r.spot - 10, 1, 59); this.down++; nk = 'penalty';
+          this.los = FF.clamp(r.spot - 10, 1, 59); this.down++; ev = 'penalty';
           break;
         }
       }
       // interception (not returned for a TD)
       if (r.intBy && r.type !== 'td') {
         this.teamStats[defIdx].ints++; ts.tos++;
-        lines = ['INTERCEPTED BY ' + num(r.intBy), 'RETURNED TO THE ' + this.yardLineName(r.spot, -1)];
         const spot = this.settings.intSpot === 'spot' ? Math.max(15, 70 - r.spot) : 15;
-        this.showBanner(lines, 'turnover', null, this.commentary('int'));
+        this.call('int', r, ctx, { spot });
         this.pendingPossession = { team: defIdx, los: spot };
         this.clockRunning = false; this.setState('result'); this.awardXP(); return;
       }
       // downs & line to gain
+      const crossedMid = this.target === 'mid' && this.los >= F.MID;
       if (r.type !== 'penalty') {
-        if (this.target === 'mid' && this.los >= F.MID) { this.target = 'goal'; this.down = 1; tag = 'FIRST DOWN'; ts.firstDowns++; }
+        if (crossedMid) { this.target = 'goal'; this.down = 1; tag = 'FIRST DOWN'; ts.firstDowns++; }
         else if (r.type === 'drop' || r.type === 'passclock' || r.type === 'incomplete' || r.type === 'pull' || r.type === 'oob' || r.type === 'sack') this.down++;
       }
       if (this.down > this.downsAllowed()) {
@@ -5864,39 +5860,148 @@ FF.Game = (function () {
         else if (yds >= 15) { FF.audio.hype(home ? 0.6 : 0.3, 0.5); if (home) this.sfx.push('cheer'); }
         else if (yds > 0) FF.audio.hype(home ? 0.25 : 0.12);
       }
-      if (tag === 'TURNOVER ON DOWNS') nk = 'downs'; else if (tag === 'FIRST DOWN' && (nk === 'gain' || nk === 'stuff' || nk === 'oob')) nk = 'first';
-      this.showBanner(lines, r.type === 'incomplete' ? 'inc' : 'play', tag, this.commentary(nk));
+      this.call(ev, r, ctx, { y, tag, crossedMid, stopClock });
       this.setState('result');
       this.awardXP();
     }
-    // a line of color commentary under the result banner
-    commentary(key) {
-      if (!key || this.fast || this.mode === 'demo') return null;
-      const P = a => rnd.pick(a);
-      switch (key) {
-        case 'td': return P(['NOBODY WAS GOING TO CATCH HIM', 'SIX POINTS ON THE BOARD', 'RIGHT THROUGH THE HEART OF THE DEFENSE', 'THE CROWD IS ON ITS FEET', 'WHAT A FINISH TO THAT DRIVE', 'HE WALKS IT IN']);
-        case 'tdLong': return P(['HE TOOK IT THE DISTANCE', 'ONE CUT AND HE WAS GONE', 'THEY WILL BE TALKING ABOUT THAT ONE', 'A HOUSE CALL']);
-        case 'intTD': return P(['HE TOOK IT ALL THE WAY BACK', 'A PICK AND A SCORE - A BACK BREAKER', 'THE DEFENSE PUTS POINTS ON THE BOARD']);
-        case 'safety': return P(['TWO POINTS THE HARD WAY', 'TRAPPED IN HIS OWN END ZONE']);
-        case 'sack': return P(['THE RUSH GOT HOME', 'HE HELD ONTO IT TOO LONG', 'GREAT PRESSURE OFF THE EDGE', 'NOWHERE TO GO WITH IT']);
-        case 'drop': return P(['RIGHT THROUGH HIS HANDS', 'HE HAS TO MAKE THAT CATCH', 'THAT ONE WILL STING']);
-        case 'deflect': return P(['GREAT PLAY ON THE BALL', 'PERFECT TIMING BY THE DEFENDER', 'HE GOT A HAND IN THERE']);
-        case 'away': return P(['NOBODY OPEN - HE THREW IT AWAY', 'LIVING TO FIGHT ANOTHER DOWN', 'SMART PLAY TO AVOID THE SACK']);
-        case 'inc': return P(['JUST OUT OF HIS REACH', 'THEY WERE NOT ON THE SAME PAGE', 'A LITTLE TOO MUCH ON THAT ONE', 'THE COVERAGE WAS TIGHT']);
-        case 'int': return P(['HE NEVER SAW THE DEFENDER', 'THAT IS A COSTLY MISTAKE', 'HE READ IT LIKE A BOOK', 'THE QUARTERBACK FORCED THAT ONE']);
-        case 'downs': return P(['THE DEFENSE HOLDS', 'THEY COME UP SHORT', 'A HUGE STOP FOR THE DEFENSE']);
-        case 'first': return P(['A FRESH SET OF DOWNS', 'MOVING THE CHAINS', 'THAT KEEPS THE DRIVE ALIVE']);
-        case 'dive': return P(['WHAT A GRAB!', 'HE LAID OUT FOR THAT ONE', 'FULL EXTENSION']);
-        case 'big': return P(['A BIG PLAY DOWN THE FIELD', 'NOTHING BUT GREEN IN FRONT OF HIM', 'THAT ONE HURT THE DEFENSE', 'HE FOUND THE SEAM']);
-        case 'gain': return P(['A SOLID GAIN', 'THEY WILL TAKE THAT', 'GOOD VISION ON THAT ONE', 'NICE AND EASY']);
-        case 'stuff': return P(['STOPPED IN HIS TRACKS', 'THE DEFENSE READ IT ALL THE WAY', 'NOWHERE TO GO', 'THE FLAG CAME OFF IN A HURRY']);
-        case 'oob': return this.inTwoMinute() ? 'SMART TO GET OUT OF BOUNDS AND STOP THE CLOCK' : P(['HE RAN OUT OF ROOM ON THE SIDELINE', 'FORCED TO THE SIDELINE']);
-        case 'conv': return P(['THE EXTRA POINTS ARE GOOD', 'THEY CASH IN']);
-        case 'convFail': return P(['POINTS LEFT ON THE BOARD', 'THE DEFENSE STANDS TALL']);
-        case 'passclock': return 'HE HAS TO GET RID OF IT FASTER THAN THAT';
-        case 'penalty': return P(['THAT WILL COST THEM', 'UNDISCIPLINED FOOTBALL', 'THE OFFICIALS SAW IT ALL THE WAY']);
+
+    /* --------------------------------------------- the broadcast banner
+       Every play gets a headline (what happened), a detail line (who, how far) and a tag (the situation: a
+       first down, a conversion on the last down, a go-ahead score), then a line of color commentary chosen from
+       what actually happened on the play: missed pulls, yards after the catch, a throw under pressure, how a
+       pass missed, the score and the clock. Lines are not repeated until the pool runs dry. */
+    call(ev, r, ctx, o) {
+      const b = this.broadcast(ev, r, ctx, o || {});
+      if (!b) return;
+      this.showBanner(b.lines, b.kind, b.tag, (this.fast || this.mode === 'demo') ? null : b.note);
+    }
+    broadcast(ev, r, ctx, o) {
+      const f = r.f || {};
+      const ln = p => { if (!p || !p.info) return ''; const n = String(p.info.name || ('#' + p.info.num)).trim().split(/\s+/); return n[n.length - 1].toUpperCase(); };
+      const full = p => (p && p.info && p.info.name ? String(p.info.name).toUpperCase() : (p ? '#' + p.info.num : ''));
+      const Y = n => { n = Math.abs(n); return n + (n === 1 ? ' YARD' : ' YARDS'); };
+      const ORD = n => ['', '1ST', '2ND', '3RD', '4TH', '5TH', '6TH'][n] || (n + 'TH');
+      const offT = this.teams[ctx.offIdx], defT = this.teams[ctx.defIdx];
+      const QB = ln(f.qb), C = ln(r.carrier), y = o.y || 0;
+      const air0 = f.catchY != null ? Math.round(Math.min(f.catchY, F.GOAL1) - r.los) : null, air = air0 != null && (o.y || 0) > 0 ? Math.min(air0, o.y) : air0, yac = air != null && o.y != null ? Math.max(0, Math.round(o.y - air)) : null;
+      const isQB = r.carrier && f.qb && r.carrier === f.qb;
+      const late = (this.half >= 2 || this.ot) && this.clock <= 75;
+      const M0 = ln(f.missedBy), V = { QB, C: C || QB, D: ln(r.puller), M: M0 && M0 !== (C || QB) ? M0 : 'THE DEFENDER', N: f.broken, AIR: air, YAC: yac, T: f.throwT != null ? f.throwT.toFixed(1) : (f.t || 0).toFixed(1), P: ln(f.presser), TO: ln(r.to || r.rec), INT: ln(r.intBy), DEF: ln(r.deflected), TEAM: offT.name, DTEAM: defT.name, ORD: ORD(ctx.down) };
+      const fill = t => t.replace(/\{(\w+)\}/g, (m, k) => V[k] != null ? V[k] : '');
+      this.recentNotes = this.recentNotes || [];
+      const pick = arr => { const fresh = arr.filter(a => !this.recentNotes.includes(a)); const c = rnd.pick(fresh.length ? fresh : arr); this.recentNotes.push(c); if (this.recentNotes.length > 18) this.recentNotes.shift(); return fill(c); };
+      const fit = (txt, alt) => (FF.textWidth(txt, { scale: 1 }) <= 236 || !alt) ? txt : alt;
+      const runWay = () => { if (f.startX == null || f.endX == null) return 'FOR'; const dx = Math.abs(f.endX - f.startX); return dx < 3 ? 'UP THE MIDDLE FOR' : dx < 7 ? 'TO THE OUTSIDE FOR' : 'AROUND THE END FOR'; };
+      const yd = n => n > 0 ? Y(n) : n < 0 ? 'A LOSS OF ' + (-n) : 'NO GAIN';
+      // lead changes (for scores)
+      const lead = (after, team) => { if (ctx.score[0] + ctx.score[1] === 0 && !late) return null; const b0 = ctx.score[team] - ctx.score[1 - team], b1 = after[team] - after[1 - team]; return b1 > 0 && b0 <= 0 ? (b0 === 0 ? 'GO-AHEAD SCORE' : 'TAKES THE LEAD') : b1 === 0 ? 'TIES THE GAME' : null; };
+      let head = '', det = '', tag = o.tag || null, kind = 'play', note = null;
+      switch (ev) {
+        case 'gain': {
+          const pass = r.thrown;
+          if (pass) {
+            head = r.catchDown ? 'DIVING CATCH!' : f.catchKind === 'one' ? 'ONE-HANDED!' : y >= 20 ? 'BIG PLAY!' : 'COMPLETE';
+            det = fit(QB + ' TO ' + C + ', ' + yd(y), 'TO ' + C + ', ' + yd(y));
+          } else if (isQB) {
+            head = f.qbRan ? 'SCRAMBLE' : 'QB KEEPER';
+            det = fit(C + ' ' + (r.type === 'oob' ? 'OUT OF BOUNDS AFTER ' + yd(y) : runWay() + ' ' + yd(y)), C + ', ' + yd(y));
+          } else {
+            const named = y < 15 && y >= 0;
+            head = y >= 15 ? 'BREAKAWAY!' : y < 0 ? 'STUFFED!' : (full(r.carrier).length <= 15 ? full(r.carrier) : C);
+            const how = r.type === 'oob' ? 'OUT OF BOUNDS AFTER ' + yd(y) : y < 0 ? 'DROPPED FOR ' + yd(y) : runWay() + ' ' + yd(y);
+            det = named ? how : fit(C + ' ' + how, C + ', ' + yd(y));
+          }
+          if (y <= 0 && r.type === 'oob') det = fit(V.C + ' PUSHED OUT, ' + yd(y), V.C + ', ' + yd(y));
+          if (tag === 'FIRST DOWN' && ctx.last) tag = ORD(ctx.down) + ' DOWN CONVERSION';
+          // color: the most notable thing about the play wins
+          const short = ctx.togo - y;
+          if (tag === 'TURNOVER ON DOWNS') note = short > 0 && y > 0 ? pick([Y(short) + ' SHORT - THE DEFENSE HOLDS', 'JUST ' + Y(short) + ' SHORT OF THE LINE', 'NOT ENOUGH - ' + Y(short) + ' SHORT']) : pick(['THE DEFENSE HOLDS', 'A HUGE STOP FOR THE {DTEAM}', 'THEY COME UP SHORT']);
+          else if (f.broken >= 2 && y >= 5) note = pick(['{C} MADE {N} DEFENDERS MISS', '{N} MISSED FLAG PULLS ON ONE PLAY', '{N} DEFENDERS HAD A SHOT AT HIS FLAG']);
+          else if (f.broken >= 2) note = pick(['{C} MADE {N} MISS BUT COULD NOT GET LOOSE', 'SLIPPERY - BUT NOT MUCH ROOM']);
+          else if (f.broken === 1 && (f.jukes || f.spins) && y >= 10) note = pick([(f.spins ? 'THE SPIN' : 'THE JUKE') + ' LEFT {M} GRABBING AIR', '{M} WHIFFED AND {C} WAS GONE', 'ONE MOVE AND {M} WAS BEATEN']);
+          else if (f.broken === 1 && y >= 5) note = pick(['{M} HAD HIM AND LET HIM GO', '{C} SLIPPED AWAY FROM {M}', 'A MISSED PULL BY {M} COST THEM']);
+          else if (pass && f.catchKind === 'one') note = pick(['ONE HAND - ARE YOU KIDDING ME?', 'HE SNAGGED IT WITH ONE HAND']);
+          else if (pass && r.catchDown) note = pick(['HE LAID OUT FOR THAT ONE', 'FULL EXTENSION BY {C}', 'WHAT A GRAB BY {C}']);
+          else if (pass && yac != null && yac >= 10) note = pick(['{YAC} OF THOSE YARDS CAME AFTER THE CATCH', 'A SHORT THROW - {C} DID THE REST', '{C} TURNED A SHORT ONE INTO A BIG ONE']);
+          else if (pass && air != null && air >= 15) note = pick(['{QB} HIT HIM IN STRIDE {AIR} YARDS DOWNFIELD', 'A STRIKE - {AIR} YARDS IN THE AIR', 'RIGHT ON THE MONEY FROM {QB}']);
+          else if (pass && f.pressured && y > 0) note = pick(['DELIVERED WITH {P} IN HIS FACE', '{QB} STOOD IN THERE AND MADE THE THROW', 'GREAT THROW UNDER PRESSURE']);
+          else if (pass && f.qbRan && y > 0) note = pick(['{QB} BOUGHT TIME WITH HIS FEET', 'EXTENDED THE PLAY AND FOUND HIM']);
+          else if (tag && /CONVERSION/.test(tag)) note = pick(['THEY HAD TO HAVE THAT ONE', 'CONVERTED WHEN IT MATTERED', 'ICE IN THE VEINS ON ' + ORD(ctx.down) + ' DOWN']);
+          else if (tag === 'FIRST DOWN') note = pick(['ACROSS MIDFIELD - A FRESH SET OF DOWNS', 'MOVING THE CHAINS', 'THAT KEEPS THE DRIVE ALIVE', 'NOW THEY CAN SMELL THE END ZONE']);
+          else if (r.type === 'oob' && o.stopClock && y > 0 && this.clock <= 60 && Math.abs(this.score[ctx.offIdx] - this.score[ctx.defIdx]) <= 8) note = pick(['SMART - OUT OF BOUNDS TO STOP THE CLOCK', 'GOT OUT OF BOUNDS AND SAVED SOME TIME']);
+          else if (y >= 15) note = pass ? pick(['THAT ONE HURT THE DEFENSE', 'A CHUNK PLAY THROUGH THE AIR', 'THE {DTEAM} WERE CAUGHT NAPPING']) : pick(['HE FOUND THE SEAM', 'NOTHING BUT GREEN IN FRONT OF HIM', 'HE HIT THE HOLE AND WAS GONE']);
+          else if (y >= 8) note = pass ? pick(['A NICE PICKUP', 'HE FOUND THE SOFT SPOT', 'PITCH AND CATCH']) : pick(['HE FOUND SOME ROOM', 'GOOD VISION ON THAT ONE', 'A NICE CUT AND A NICE GAIN']);
+          else if (y >= 4) note = pass ? pick(['EASY COMPLETION', 'THEY WILL TAKE THAT', yac != null && yac >= 4 ? 'GOOD HARD YARDS AFTER THE CATCH' : 'MOVES THE BALL']) : pick(['A SOLID GAIN', 'GOOD HARD YARDS', 'THAT KEEPS THEM ON SCHEDULE']);
+          else if (y >= 1) note = pick(['A SHORT GAIN', 'JUST A COUPLE OF YARDS', 'NOT MUCH THERE']);
+          else if (y === 0) note = pick(['NOWHERE TO GO', 'STOPPED AT THE LINE', 'THE DEFENSE READ IT ALL THE WAY']);
+          else note = pick(['{D} GOT TO HIM IN A HURRY', 'STOPPED IN THE BACKFIELD', 'THE FLAG CAME OFF IN A HURRY']);
+          break;
+        }
+        case 'sack':
+          head = 'SACKED!'; det = fit(ln(r.puller) + ' DROPS ' + QB + (y < 0 ? ', A LOSS OF ' + (-y) : ''), 'SACKED BY ' + ln(r.puller));
+          note = tag === 'TURNOVER ON DOWNS' ? pick(['AND THAT WILL END THE DRIVE', 'A DRIVE-KILLING SACK']) : (f.t || 0) > 3.4 ? pick(['HE HELD IT FOR ' + (f.t || 0).toFixed(1) + ' SECONDS', 'HOLDING IT THAT LONG WILL GET YOU SACKED', '{QB} HAS TO GET RID OF IT']) : pick(['{D} GOT HOME IN A HURRY', 'THE RUSH GOT THERE', 'NOWHERE TO GO WITH IT', '{D} BLEW RIGHT BY EVERYONE']);
+          break;
+        case 'inc': {
+          head = 'INCOMPLETE'; kind = 'inc';
+          const missTxt = { behind: 'THROWN BEHIND {TO}', ahead: 'LED {TO} TOO FAR', long: 'SAILED OVER {TO}', short: 'UNDERTHROWN TO {TO}' };
+          if (r.drop) { det = 'DROPPED BY ' + ln(r.rec); note = pick(['{TO} HAS TO HAVE THAT ONE', 'RIGHT THROUGH HIS HANDS', 'THAT ONE WILL STING', 'HE TOOK HIS EYES OFF IT']); }
+          else if (r.deflected) { det = 'BROKEN UP BY ' + ln(r.deflected); note = pick(['{DEF} GOT A HAND ON IT', 'GREAT BREAK ON THE BALL BY {DEF}', 'PERFECT TIMING BY {DEF}', '{DEF} WAS ALL OVER IT']); }
+          else if (!r.to) { det = 'THROWN AWAY BY ' + QB; note = pick(['NOBODY OPEN - SMART TO THROW IT AWAY', 'LIVE TO PLAY ANOTHER DOWN', 'BETTER THAN TAKING A SACK']); }
+          else if (f.miss || r.offTarget) { det = fill(missTxt[f.miss] || 'OFF TARGET FOR {TO}'); note = f.pressured ? pick(['THE PRESSURE GOT TO {QB}', '{P} MADE HIM HURRY IT']) : pick(['{QB} MISSED HIM', 'AN ERRANT THROW FROM {QB}', '{TO} WAS OPEN - THE THROW WAS NOT THERE']); }
+          else if (r.oob) { det = 'OUT OF BOUNDS - INTENDED FOR ' + V.TO; note = pick(['NO CHANCE TO KEEP IT IN', 'JUST OUT OF HIS REACH']); }
+          else { det = 'INTENDED FOR ' + V.TO; note = pick(['THE COVERAGE WAS THERE', 'NOT ON THE SAME PAGE', 'JUST OUT OF HIS REACH']); }
+          if (tag === 'TURNOVER ON DOWNS') note = pick(['AND THE {DTEAM} TAKE OVER', 'THE DEFENSE HOLDS ON ' + ORD(ctx.down) + ' DOWN', 'A HUGE STOP FOR THE DEFENSE']);
+          break;
+        }
+        case 'passclock': head = 'PASS CLOCK'; det = QB + ' HELD IT TOO LONG'; note = 'LOSS OF DOWN - HE HAS TO GET RID OF IT'; break;
+        case 'pitch': head = 'BAD PITCH'; det = 'ON THE GROUND - DEAD BALL AT THE SPOT'; note = pick(['THE EXCHANGE WAS NOT CLEAN', 'THEY GOT AWAY WITH ONE THERE']); break;
+        case 'penalty': head = r.name; det = '10 YARDS AND LOSS OF DOWN'; kind = 'penalty'; note = pick(['THAT WILL COST THEM', 'THE OFFICIALS SAW IT ALL THE WAY']); break;
+        case 'prePenalty': { const pp = o.pp; head = pp.name; det = pp.yards + ' YARDS ON THE ' + (pp.against === 'def' ? 'DEFENSE' : 'OFFENSE') + ' - REPLAY THE DOWN'; kind = 'penalty'; note = pick(['THAT WILL COST THEM', 'UNDISCIPLINED FOOTBALL', 'FREE YARDS FOR THE ' + (pp.against === 'def' ? offT.name : defT.name)]); break; }
+        case 'td': {
+          head = 'TOUCHDOWN!'; kind = 'td';
+          det = r.thrown ? fit(QB + ' TO ' + C + ', ' + Y(y), C + ', ' + Y(y) + ' PASS') : isQB ? fit(QB + ' KEEPS IT, ' + Y(y), QB + ', ' + Y(y)) : C + ', ' + y + '-YARD RUN';
+          tag = lead(o.after, ctx.offIdx);
+          if (late && tag) note = pick(['WHAT A MOMENT FOR THE {TEAM}', 'THE {TEAM} STRIKE LATE', 'THAT COULD BE THE BALLGAME']);
+          else if (f.broken >= 2) note = pick(['{C} MADE {N} DEFENDERS MISS ON THE WAY', 'NOBODY COULD GET HIS FLAG']);
+          else if (r.thrown && yac != null && yac >= 12) note = pick(['{YAC} YARDS AFTER THE CATCH', '{C} DID THE REST']);
+          else if (r.thrown && air != null && air >= 15) note = pick(['A DIME FROM {QB}, {AIR} YARDS IN THE AIR', 'DROPPED IT RIGHT IN THE BUCKET']);
+          else if (isQB) note = pick(['THE QUARTERBACK DID IT HIMSELF', '{QB} TUCKED IT AND WENT']);
+          else if (y >= 25) note = pick(['HE TOOK IT THE DISTANCE', 'ONE CUT AND HE WAS GONE', 'A HOUSE CALL', 'THEY WILL BE TALKING ABOUT THAT ONE']);
+          else if (y <= 5) note = pick(['PUNCHED IN FROM CLOSE RANGE', 'HE WALKED IT IN', 'FINISHED OFF THE DRIVE']);
+          else note = pick(['SIX POINTS ON THE BOARD', 'RIGHT THROUGH THE HEART OF THE DEFENSE', 'THE CROWD IS ON ITS FEET', 'WHAT A FINISH TO THAT DRIVE']);
+          break;
+        }
+        case 'pick6': {
+          head = 'PICK SIX!'; kind = 'td';
+          const ret = f.intY != null ? Math.max(1, Math.round(f.intY - F.GOAL0)) : null;
+          det = V.INT + (ret ? ', ' + ret + '-YARD RETURN' : ' TAKES IT BACK');
+          tag = lead(o.after, ctx.defIdx) || 'DEFENSIVE SCORE';
+          note = pick(['A BACK-BREAKER FOR THE {TEAM}', '{INT} SAW IT ALL THE WAY', 'THE DEFENSE PUTS POINTS ON THE BOARD']);
+          break;
+        }
+        case 'int': {
+          head = 'INTERCEPTED!'; kind = 'turnover';
+          det = fit(V.INT + ' PICKS OFF ' + QB, 'PICKED OFF BY ' + V.INT);
+          tag = 'TURNOVER';
+          const missTxt = { behind: 'THROWN BEHIND {TO} AND {INT} WAS WAITING', ahead: 'LED {TO} TOO FAR AND {INT} WAS THERE', long: 'IT SAILED ON {QB} - {INT} SAID THANK YOU', short: 'UNDERTHROWN - {INT} CAME BACK FOR IT' };
+          if (f.intHow === 'lane') note = pick(['{INT} JUMPED THE ROUTE', '{INT} READ IT LIKE A BOOK', 'HE NEVER SAW {INT}']);
+          else if (f.intHow === 'contested') note = pick(['{INT} WON THE JUMP BALL', '{INT} TOOK IT AWAY FROM {TO}', 'A 50-50 BALL AND THE DEFENSE WON']);
+          else if (f.miss && missTxt[f.miss]) note = fill(missTxt[f.miss]);
+          else if (f.pressured) note = pick(['{QB} HAD TO FORCE IT UNDER PRESSURE', 'THE RUSH FORCED A BAD THROW']);
+          else note = pick(['A COSTLY MISTAKE BY {QB}', 'THE QUARTERBACK FORCED THAT ONE', '{INT} WAS SITTING ON IT']);
+          break;
+        }
+        case 'safety':
+          head = 'SAFETY!'; kind = 'td';
+          det = r.defense ? 'RETURN STOPPED IN THE END ZONE' : fit(ln(r.puller) + ' PULLS ' + V.C + ' IN THE END ZONE', 'PULLED IN THE END ZONE');
+          tag = lead(this.score.slice(), r.defense ? ctx.offIdx : ctx.defIdx) || '2 POINTS'; note = pick(['TWO POINTS THE HARD WAY', 'TRAPPED IN HIS OWN END ZONE']);
+          break;
+        case 'convGood': head = 'GOOD!'; kind = 'td'; det = fit((r.thrown ? QB + ' TO ' + C : C) + ' - ' + o.n + ' POINT' + (o.n > 1 ? 'S' : ''), C + ' - ' + o.n + ' PTS'); tag = lead(o.after, o.team); note = o.n > 1 ? pick(['THEY GO FOR TWO AND GET IT', 'THE GAMBLE PAYS OFF']) : pick(['THEY CASH IN', 'AUTOMATIC', 'TACK ON THE EXTRA POINT']); break;
+        case 'convRet': head = 'RETURNED!'; kind = 'turnover'; det = '2 POINTS FOR THE ' + this.teams[1 - o.team].name; tag = lead(o.after, 1 - o.team); note = pick(['WHAT A TURN OF EVENTS', 'THE DEFENSE STEALS TWO']); break;
+        case 'convFail': head = 'NO GOOD'; kind = 'inc'; det = 'THE ' + o.n + '-POINT TRY FAILS'; note = r.type === 'incomplete' ? pick(['THE PASS FALLS INCOMPLETE', 'THE DEFENSE STANDS TALL']) : pick(['STOPPED SHORT OF THE GOAL LINE', 'POINTS LEFT ON THE BOARD']); break;
+        default: return null;
       }
-      return null;
+      return { lines: [head, det], kind, tag, note };
     }
     // Madden-style clock between plays: when the play ends in bounds with the clock running, a
     // run-off (default 15 s of game time) burns fast through the whistle, the banner and the camera
@@ -6011,11 +6116,10 @@ FF.Game = (function () {
     resolveConversion(r) {
       const c = this.conversion; this.conversion = null;
       const team = c.team;
-      let lines;
-      if (r.type === 'td' && !r.defense) { this.score[team] += c.choice; lines = ['CONVERSION GOOD!', '+' + c.choice + ' POINT' + (c.choice > 1 ? 'S' : '')]; this.sfx.push('crowd'); }
-      else if (r.type === 'td' && r.defense) { this.score[1 - team] += 2; lines = ['RETURNED!', '2 POINTS - ' + this.teams[1 - team].name]; }
-      else lines = ['CONVERSION FAILED', 'NO GOOD'];
-      this.showBanner(lines, 'play', null, this.commentary(r.type === 'td' && !r.defense ? 'conv' : 'convFail'));
+      const ctx = { score: this.score.slice(), offIdx: team, defIdx: 1 - team, down: 1, togo: 1, last: false };
+      if (r.type === 'td' && !r.defense) { this.score[team] += c.choice; this.sfx.push('crowd'); this.call('convGood', r, ctx, { n: c.choice, team, after: this.score.slice() }); }
+      else if (r.type === 'td' && r.defense) { this.score[1 - team] += 2; this.call('convRet', r, ctx, { team, after: this.score.slice() }); }
+      else this.call('convFail', r, ctx, { n: c.choice });
       this.awardXP();
       if (this.ot) { this.setState('result'); return; }
       this.pendingPossession = { team: 1 - team, los: 15 };
@@ -6616,18 +6720,25 @@ FF.ui = (function () {
     const bev = { light: '#ffffff', dark: FF.shade(col, 0.55) };
     const lines = b.lines;
     const grad = b.kind === 'td' ? ['#fff8c0', '#ffd21f', '#e08a10'] : b.kind === 'turnover' || b.kind === 'penalty' ? ['#ffe0c0', '#ff9a4a', '#c04a10'] : ['#ffffff', '#e8e8f4', '#9aa0b8'];
-    lines.forEach((ln, i) => {
-      const scale = ln.length > 15 ? 1 : 2;
-      if (scale === 2) FF.textFX(x, ln, 200, y + 10 + i * 24, { scale, gradient: grad, outline: 2, shadow: 2, align: 'center', italic: true });
-      else FF.text(x, ln, 200, y + 10 + i * 24 + 4, { scale, color: col, outline: '#000', align: 'center', italic: true });
-    });
-    if (b.tag) { FF.rect(x, 228, y + 50, 88, 11, '#ffe14a'); FF.text(x, b.tag, 272, y + 53, { font: FONT3x5, color: '#000', align: 'center' }); }
-    // color commentary slides out under the banner a beat later
-    if (b.note && b.t > 0.4) {
-      const v = FF.easeOut(Math.min(1, (b.t - 0.4) / 0.25)); const nw = FF.textWidth(b.note, { font: FONT3x5 }) + 16;
-      const nx = Math.round(W / 2 - nw / 2);
-      FF.rect(x, nx, y + 67, Math.round(nw * v), 11, 'rgba(0,0,0,0.78)');
-      if (v >= 1) { FF.rect(x, nx, y + 67, 3, 11, b.kind === 'td' ? '#ffe14a' : '#4a6ab0'); FF.text(x, b.note, W / 2 + 2, y + 70, { font: FONT3x5, color: '#e8e8f4', align: 'center' }); }
+    // headline big (what happened), detail small (who and how far): a fixed hierarchy, whatever the length
+    const head = lines[0] || '', det = lines[1] || '';
+    const big = FF.textWidth(head, { scale: 2 }) <= 236;
+    if (big) FF.textFX(x, head, 200, y + 9, { scale: 2, gradient: grad, outline: 2, shadow: 2, align: 'center', italic: true });
+    else FF.textFX(x, head, 200, y + 13, { scale: 1, gradient: grad, outline: 1, shadow: 1, align: 'center', italic: true });
+    if (det) { FF.rect(x, 96, y + 31, 208, 1, 'rgba(255,255,255,0.18)'); FF.text(x, det, 200, y + 36, { scale: 1, color: '#f0f0f8', outline: '#000', align: 'center' }); }
+    if (b.tag) { const tw = Math.max(88, FF.textWidth(b.tag, { font: FONT3x5 }) + 12); FF.rect(x, 316 - tw, y + 50, tw, 11, b.kind === 'turnover' ? '#ff9a4a' : '#ffe14a'); FF.text(x, b.tag, 316 - tw / 2, y + 53, { font: FONT3x5, color: '#000', align: 'center' }); }
+    // color commentary slides out under the banner a beat later, in the regular font so it reads on a phone
+    if (b.note && b.t > 0.45) {
+      const v = FF.easeOut(Math.min(1, (b.t - 0.45) / 0.25));
+      const small = FF.textWidth(b.note, { scale: 1 }) > W - 24;
+      const tw = small ? FF.textWidth(b.note, { font: FONT3x5 }) : FF.textWidth(b.note, { scale: 1 });
+      const nw = tw + 18, nx = Math.round(W / 2 - nw / 2), nh = small ? 11 : 13;
+      FF.rect(x, nx, y + 67, Math.round(nw * v), nh, 'rgba(0,0,0,0.8)');
+      if (v >= 1) {
+        FF.rect(x, nx, y + 67, 3, nh, b.kind === 'td' ? '#ffe14a' : b.kind === 'turnover' ? '#ff9a4a' : '#4a6ab0');
+        if (small) FF.text(x, b.note, W / 2 + 2, y + 70, { font: FONT3x5, color: '#e8e8f4', align: 'center' });
+        else FF.text(x, b.note, W / 2 + 2, y + 70, { scale: 1, color: '#e8e8f4', outline: '#000', align: 'center', italic: true });
+      }
     }
   }
 
