@@ -1411,9 +1411,43 @@ function fitCanvas() {
 // prompts name keys; on a touch screen they name the on-screen buttons instead
 FF.kb = function (s) {
   if (!(FF.touch && FF.touch.active) || !s) return s;
-  return s.replace(/THROW: 1 2 3 4/g, 'THROW: TAP A WINDOW').replace(/1-3: PICK IN WINDOW/g, 'TAP A TILE').replace(/1-4 \+ ARROW: HOT ROUTE/g, '').replace(/HOLD E \+ L\/R: MOTION/g, 'HOLD B + STICK: MOTION')
-    .replace(/SHIFT: SPRINT/g, 'SPRINT: HOLD').replace(/\bSPACE\b/g, 'A').replace(/\bE:/g, 'B:').replace(/\bSHIFT\b/g, 'SPRINT').replace(/\bTAB\b/g, 'SWITCH').replace(/\bESC\b/g, 'MENU').replace(/\bENTER\b/g, 'TAP').replace(/\bARROWS\b/g, 'STICK').replace(/\bQ:/g, 'AUD:').replace(/\bV: PLAY ART/g, 'PLAY ART BUTTON').replace(/R: INSTANT REPLAY/g, 'REPLAY BUTTON').replace(/\bR: SPEED/g, 'SPEED').replace(/UP\/DOWN: CAMERA/g, 'CAM').replace(/LEFT\/RIGHT: SCRUB/g, 'STICK: SCRUB')
-    .replace(/ {3,}/g, '   ').trim();
+  // whole phrases first, then key-by-key: on a phone the right-hand buttons are labeled with the action itself
+  // (SNAP, JUKE, PULL, SPIN, SWAT, DIVE, SPRINT, SWITCH, AUD, PLAY ART), so the hint names the button
+  s = s.replace(/THROW: 1 2 3 4/g, 'THROW: TAP A WINDOW').replace(/1-3: PICK IN WINDOW/g, 'TAP A TILE').replace(/1-4 \+ ARROW: HOT ROUTE/g, '').replace(/HOLD E \+ L\/R: MOTION/g, 'HOLD MOTION + STICK: MOTION')
+    .replace(/R: INSTANT REPLAY/g, 'REPLAY BUTTON').replace(/\bR: SPEED/g, 'SPEED').replace(/UP\/DOWN: CAMERA/g, 'CAM').replace(/LEFT\/RIGHT: SCRUB/g, 'STICK: SCRUB');
+  const seg = s.split(/ {3,}/).map(t => t.trim()).filter(Boolean).map(t => {
+    const m = t.match(/^(SPACE|E|SHIFT|TAB|Q|V|ESC|ENTER|ARROWS)\s*:\s*(.*)$/);
+    if (!m) return /^([A-Z]|[0-9](-[0-9])?)\s*:/.test(t) ? null : t;   // other letter shortcuts are buttons on screen
+    const k = m[1], a = m[2];
+    if (k === 'SHIFT') return 'HOLD SPRINT';
+    if (k === 'ESC') return 'MENU: ' + a.replace(/^MENU$/, 'PAUSE');
+    if (k === 'ENTER') return 'TAP: ' + a;
+    if (k === 'ARROWS') return 'STICK: ' + a;
+    if (k === 'Q') return 'AUD: AUDIBLE';
+    if (k === 'V') return 'PLAY ART BUTTON';
+    if (k === 'TAB') return 'SWITCH: ' + a.replace(/^SWITCH( PLAYER)?$/, 'CHANGE PLAYER');
+    return 'TAP ' + a;    // SPACE / E: the button carries the action's name
+  }).filter(Boolean);
+  return seg.join('   ').replace(/\bARROWS\b/g, 'STICK').replace(/\bSPACE\b/g, 'THE BUTTON').replace(/ {3,}/g, '   ').trim();
+};
+// menu footers on a touch screen: keyboard instructions become tap instructions. Works segment by segment
+// (segments are separated by 3+ spaces): ENTER -> OK, ESC -> BACK, arrows / SPACE -> TAP, single-letter
+// shortcuts are dropped (every screen that has one also draws an on-screen button for it).
+FF.tt = function (s) {
+  if (!(FF.touch && FF.touch.active) || !s) return s;
+  if (/PRESS Y TO DELETE/.test(s)) return 'TAP LEFT: DELETE      TAP RIGHT: CANCEL';
+  const seg = s.split(/ {3,}/).map(t => t.trim()).filter(Boolean).map(t => {
+    if (/^PRESS ENTER$/.test(t) || /^PRESS ANY KEY/.test(t)) return 'TAP TO CONTINUE';
+    let m = t.match(/^([A-Z0-9/,+ -]+?):\s*(.*)$/); if (!m) return t.replace(/\bENTER\b/g, 'OK').replace(/\bESC\b/g, 'BACK');
+    const k = m[1].trim(), a = m[2];
+    if (/^(ENTER|RIGHT\/ENTER|ENTER OR SPACE)$/.test(k)) return 'OK: ' + a;
+    if (/^ESC$/.test(k)) return a === 'BACK' ? 'BACK' : 'BACK: ' + a;
+    if (/^BACKSPACE$/.test(k)) return 'DEL: ' + a;
+    if (/^(ARROWS|UP\/DOWN|LEFT\/RIGHT|SPACE|ARROWS, ENTER OR 1-3|LEFT\/RIGHT OR - \/ \+)$/.test(k)) return 'TAP: ' + a;
+    if (/^[A-Z]$/.test(k) || /^[0-9]-[0-9]$/.test(k)) return null;   // letter / number shortcuts have on-screen buttons
+    return t;
+  }).filter(Boolean);
+  return seg.join('   ');
 };
 window.addEventListener('resize', fitCanvas);
 
@@ -1750,7 +1784,7 @@ Object.assign(FF, { hexToRgb, rgbToHex, shade, tint, luma, rgbToHsl, hslToRgb, s
 FF.defaultSettings = () => ({
   halfMinutes: 6, downsToCross: 4, downsToScore: 4, twoMinuteStops: true, timeouts: 1,
   difficulty: 1, penalties: true, intSpot: 'spot', qbRun: 'always', fractionalScale: false, scanlines: false,
-  sfx: true, music: true, autoPull: false, runoff: 15, playStyle: 'classic', gameSpeed: 'normal', aimSens: 'medium',
+  sfx: true, music: true, autoPull: false, runoff: 15, playStyle: 'classic', gameSpeed: 'normal', aimSens: 'medium', passView: 'windows',
 });
 FF.load = function (key, fallback) { try { const v = localStorage.getItem('ff94_' + key); return v ? JSON.parse(v) : fallback; } catch (e) { return fallback; } };
 FF.save = function (key, val) { try { localStorage.setItem('ff94_' + key, JSON.stringify(val)); return true; } catch (e) { return false; } };
@@ -3420,6 +3454,41 @@ FF.field = (function () {
     }
   }
 
+  /* ------------------------------------- on-field pass targets (PASSING: TAP RECEIVER) */
+  // A badge over each receiver's head with his throw number and the read (OPEN / LOB IT / BULLET / COVERED),
+  // and a ring at his feet in the read's color: tap him (or press his number) to throw, hold for a bullet.
+  const READ = { open: ['OPEN', '#58e868'], under: ['LOB IT', '#ffe14a'], over: ['BULLET', '#ffa040'], tight: ['COVERED', '#ff5050'] };
+  function drawFieldTargets(x, sim, cam, vp, t) {
+    if (!sim.fieldTargets) return;
+    const touch = FF.touch && FF.touch.active;
+    x.save(); x.beginPath(); x.rect(vp.x, vp.y, vp.w, vp.h); x.clip();
+    for (const r of sim.windowTargets) {
+      const p = r.p, pr = proj(p.x, p.y, cam, vp), ss = spriteScale(pr.s);
+      const rd = READ[r.rel] || READ.open, col = rd[1];
+      const held = sim.holdL && sim.labels[sim.holdL] === p;
+      // ring under the feet
+      x.strokeStyle = '#000'; x.lineWidth = 3; x.beginPath(); x.ellipse(pr.x, pr.y, 9 * ss, 4 * ss, 0, 0, Math.PI * 2); x.stroke();
+      x.strokeStyle = col; x.lineWidth = held ? 2.5 : 1.5; x.beginPath(); x.ellipse(pr.x, pr.y, 9 * ss, 4 * ss, 0, 0, Math.PI * 2); x.stroke();
+      // badge over the head: number cap (keyboard) + read tag
+      const top = Math.round(pr.y - 30 * ss) - 9;
+      const tag = rd[0], tw = FF.textWidth(tag, { font: FONT3x5 }) + 4;
+      const cw = touch ? 0 : 9, bw = cw + tw + 2, bx = Math.round(pr.x - bw / 2);
+      FF.rect(x, bx - 1, top - 1, bw + 2, 10, '#000');
+      if (!touch) { FF.rect(x, bx, top, 8, 8, held ? '#ffe14a' : '#f0f0f0'); FF.text(x, r.label, bx + 4, top + 2, { font: FONT3x5, color: '#c8401c', align: 'center' }); }
+      FF.rect(x, bx + cw, top, tw + 2, 8, 'rgba(0,0,0,0.85)');
+      FF.text(x, tag, bx + cw + 2, top + 2, { font: FONT3x5, color: col });
+      x.fillStyle = '#000'; x.beginPath(); x.moveTo(pr.x - 3, top + 9); x.lineTo(pr.x + 3, top + 9); x.lineTo(pr.x, top + 12); x.fill();
+    }
+    x.restore();
+  }
+  // receiver under a canvas point (touch): the one whose body or badge is nearest, within reach
+  function fieldTargetAt(sim, cam, vp, sx, sy) {
+    if (!sim || !sim.fieldTargets) return null;
+    let best = null, bd = 18;
+    for (const r of sim.windowTargets) { const pr = proj(r.p.x, r.p.y, cam, vp); const ss = spriteScale(pr.s); const d = Math.hypot(sx - pr.x, (sy - (pr.y - 14 * ss)) * 0.8); if (d < bd) { bd = d; best = r; } }
+    return best;
+  }
+
   /* ------------------------------------------------- passing windows */
   // Three (plus a small D tab) receiver cameras across the top, Madden '94 style.
   const WIN = { y: 3, h: 53, w: 84, gap: 4, x0: 30 };   // receiver cameras: ~25% shorter than Madden's so the field stays visible
@@ -3474,7 +3543,7 @@ FF.field = (function () {
     }
   }
 
-  return { proj, unproj, viewDir, MAIN_VP, makeCamera, baseFor, updateCamera, updateCameraX, screenYToDepth, drawField, drawActors, drawWindows, dirFrom, fieldQuad, fieldLine, fieldText, DK, YK, XK, FLAT_K, FLAT_S, FLAT_R, flatWyAt, FW, FL, GOAL0, GOAL1, MID, WIN };
+  return { proj, unproj, viewDir, MAIN_VP, makeCamera, baseFor, updateCamera, updateCameraX, screenYToDepth, drawField, drawActors, drawWindows, drawFieldTargets, fieldTargetAt, dirFrom, fieldQuad, fieldLine, fieldText, DK, YK, XK, FLAT_K, FLAT_S, FLAT_R, flatWyAt, FW, FL, GOAL0, GOAL1, MID, WIN };
 })();
 
 </script>
@@ -4161,8 +4230,10 @@ FF.Sim = (function () {
       if (this.humanSide === 'def' && this.settings.penalties) {
         const c = this.controlled;
         if (c.y < this.los + 0.3) this.flag('OFFSIDE', 'def', 5, true);
-        else if (c.assign.type !== 'rush' && c.y < this.los + 7 && c.vy < -1) this.flag('ILLEGAL RUSH', 'def', 5, true);
       }
+      // rush eligibility is fixed at the snap: only a defender lined up on or behind the rush line (7 yards off
+      // the ball) may cross the line of scrimmage before the ball is handed off, pitched or thrown
+      for (const d of this.def) d.rushOK = d.y >= this.los + 7 - 0.35;
       // get-off: coverage reads the snap at once, a rusher needs a beat to see the ball move and come off
       // his seven-yard spot (so the quarterback gets a look at the field before the heat arrives)
       for (const d of this.def) {
@@ -4280,9 +4351,16 @@ FF.Sim = (function () {
         if (c.y < -0.5 || c.y > F.FL + 0.5) { this.end({ type: 'oob', spot: FF.clamp(c.y, 0, F.FL) }); return; }
         }
       }
+      // illegal rush: the human's defender crossed the line of scrimmage early without starting behind the rush line
+      { const c = this.controlled;
+        const free = this.handedOff || this.thrown || this.carrier || this.ball.state === 'pitch';
+        if (c && c.side === 'def' && this.humanSide === 'def' && !c.rushOK && !free && c.y < this.los - 0.05) {
+          if (this.settings.penalties) { if (!this.penalty) { this.flag('ILLEGAL RUSH', 'def', 5, true); this.penalty.live = true; this.messages.push({ text: 'FLAG: ILLEGAL RUSH', t: 1.6 }); this.sfxQ('whistle'); } }
+          else { c.y = this.los - 0.05; if (c.vy < 0) c.vy = 0; }   // arcade rules: he just can't cross
+        } }
       // QB past the line of scrimmage: a keeper if the rules allow it, otherwise held at the line
       if (this.qb.hasBall && !this.handedOff && this.qb.y > this.los - 0.4) {
-        if (this.qbMayRun()) { this.becomeCarrier(this.qb, 'rush'); this.windowsOpen = false; this.messages.push({ text: 'QB KEEPER', t: 1.0 }); this.sfxQ('hand'); }
+        if (this.qbMayRun()) { this.becomeCarrier(this.qb, 'rush'); this.windowsOpen = false; this.fieldTargets = false; this.messages.push({ text: 'QB KEEPER', t: 1.0 }); this.sfxQ('hand'); }
         else { this.qb.y = this.los - 0.4; if (this.qb.vy > 0) this.qb.vy = 0; }
       }
       // windows
@@ -4347,11 +4425,15 @@ FF.Sim = (function () {
           // QB with the ball: move (behind the line, or past it when the rules allow), throw with 1-4.
           // The passing windows open by themselves a beat after the snap; E toggles them if you want the view back.
           this.humanMove(p, input, 0.8);
-          if (!this.windowsOpen && !this.windowsClosedByUser && this.t > 0.25 && this.play.type !== 'run') { this.windowsOpen = true; this.holdL = null; }
-          if (input.pressed('B')) { this.windowsOpen = !this.windowsOpen; this.windowsClosedByUser = !this.windowsOpen; this.holdL = null; this.sfxQ('blip'); }
+          // PASSING (Options): '94 WINDOWS opens the receiver cameras; TAP RECEIVER leaves the field clear and you
+          // throw by tapping (or pressing the number of) the receiver on the field
+          const onField = this.settings.passView === 'field';
+          if (!onField && !this.windowsOpen && !this.windowsClosedByUser && this.t > 0.25 && this.play.type !== 'run') { this.windowsOpen = true; this.holdL = null; }
+          if (!onField && input.pressed('B')) { this.windowsOpen = !this.windowsOpen; this.windowsClosedByUser = !this.windowsOpen; this.holdL = null; this.sfxQ('blip'); }
+          this.fieldTargets = onField && this.t > 0.2;
           for (const L of ['A', 'B', 'C', 'D']) {
             const r = this.labels[L]; if (!r) continue; const K = THROW_KEY[L];
-            if (input.pressed(K)) { this.holdL = L; this.holdT = 0; if (!this.windowsOpen) { this.windowsOpen = true; this.windowsClosedByUser = false; } }
+            if (input.pressed(K)) { this.holdL = L; this.holdT = 0; if (!onField && !this.windowsOpen) { this.windowsOpen = true; this.windowsClosedByUser = false; } }
             if (this.holdL === L) {
               if (input.down(K)) { this.holdT += dt; if (this.holdT >= 0.2) { this.throwTo(r, 'bullet', input.axis()); this.holdL = null; } }
               else if (input.released(K)) { this.throwTo(r, 'lob', input.axis()); this.holdL = null; }
@@ -4710,7 +4792,7 @@ FF.Sim = (function () {
       b.T = kind === 'bullet' ? dd / 26 + 0.1 : dd / 16 + 0.2;
       b.apex = kind === 'bullet' ? 1.6 + dd * 0.03 : 2.8 + dd * 0.11;
       b.x = qb.x; b.y = qb.y; b.z = 1.4;
-      this.thrown = true; this.windowsOpen = false; this.passClock = null; this.callForBall = 0;
+      this.thrown = true; this.windowsOpen = false; this.fieldTargets = false; this.passClock = null; this.callForBall = 0;
       const near = this.def.some(d => FF.dist(d.x, d.y, qb.x, qb.y) < 1.7);
       this.setState(qb, 'throw'); qb.pose = near && rnd.chance(0.7) ? 'throwJump' : 'throw'; qb.frame = 1; qb.animT = 0;
       this.stat(qb, 'passAtt'); if (r) this.stat(r, 'targets');
@@ -5119,7 +5201,7 @@ FF.Sim = (function () {
     /* ------------------------------------------------------- dead */
     end(res) {
       if (this.phase === 'dead') return;
-      this.phase = 'dead'; this.deadT = 0; this.result = res; this.windowsOpen = false;
+      this.phase = 'dead'; this.deadT = 0; this.result = res; this.windowsOpen = false; this.fieldTargets = false;
       res.los = this.los; res.attackDir = this.attackDir; res.carrier = this.carrier || (res.type === 'oob' && this.qb.hasBall ? this.qb : null); res.penaltyPre = this.penalty;
       res.thrown = this.thrown; res.handedOff = this.handedOff; res.to = this.ball.to; res.intBy = this.intBy || null;
       // yardage
@@ -5541,6 +5623,11 @@ FF.Game = (function () {
       const gainText = y => y > 0 ? 'GAIN OF ' + y : y < 0 ? 'LOSS OF ' + (-y) : 'NO GAIN';
       // pre-snap defensive penalty nullifies the play
       let nk = null;   // commentary key
+      // a live-ball foul (illegal rush) is declined when the offense did better than the 5 yards on the play
+      if (r.penaltyPre && r.penaltyPre.live) {
+        const gain = r.type === 'td' && !r.defense ? 99 : (r.type === 'pull' || r.type === 'oob') && !r.intBy ? Math.round(r.spot - this.los) : -99;
+        if (gain >= 5) { this.msg(r.penaltyPre.name + ' - DECLINED', 2); r.penaltyPre = null; }
+      }
       if (r.penaltyPre) {
         const pp = r.penaltyPre;
         this.penalize(pp.name, pp.against, pp.yards, true);
@@ -5861,6 +5948,7 @@ FF.Game = (function () {
         if (shaking) x.restore();
         FF.stadium.drawWeather(x, F.MAIN_VP, t, this.cam);
         if (s.windowsOpen && !this.retro) F.drawWindows(x, s, this.teams, t);
+        if (!this.retro) F.drawFieldTargets(x, s, this.cam, F.MAIN_VP, t);
         FF.ui.drawHud(x, this, t);
       }
       // messages (audibles, timeouts, penalties) — not over the title screen's logo
@@ -6262,10 +6350,10 @@ FF.ui = (function () {
       let hint = null, sub = null;
       const c = s.controlled;
       if (s.audible) hint = FF.touch && FF.touch.active ? 'AUDIBLE: TAP A PLAY' : 'AUDIBLE: PRESS 1 / 2 / 3';
-      else if (pre) { if (s.humanSide === 'off') { if (s.star && c !== s.qb && c !== s.center) hint = 'WAITING FOR THE SNAP...'; else { hint = 'SPACE: SNAP'; sub = 'Q: AUDIBLE   V: PLAY ART   1-4 + ARROW: HOT ROUTE   HOLD E + L/R: MOTION   ESC: MENU'; } } else { hint = 'TAB: SWITCH PLAYER   ARROWS: MOVE'; sub = 'Q: AUDIBLE   V: PLAY ART   ESC: MENU'; } }
+      else if (pre) { if (s.humanSide === 'off') { if (s.star && c !== s.qb && c !== s.center) hint = 'WAITING FOR THE SNAP...'; else { hint = 'SPACE: SNAP'; sub = 'Q: AUDIBLE   V: PLAY ART   1-4 + ARROW: HOT ROUTE   HOLD E + L/R: MOTION   ESC: MENU'; } } else { const rusher = c && c.y >= s.los + 7 - 0.35; hint = rusher ? 'RUSHER: BEHIND THE DASHED LINE - YOU MAY RUSH' : 'COVERAGE: NO CROSSING THE LINE UNTIL THE BALL IS OUT'; sub = 'TAB: SWITCH   Q: AUDIBLE   V: PLAY ART   ESC: MENU'; } }
       else if (c && c.side === 'off') {
         if (c === s.qb && c.hasBall && !s.handedOff) {
-          hint = 'THROW: 1 2 3 4   (TAP = LOB, HOLD = BULLET)';
+          hint = FF.settings.passView === 'field' ? (FF.touch && FF.touch.active ? 'TAP A RECEIVER TO THROW   (TAP = LOB, HOLD = BULLET)' : 'THROW: PRESS THE NUMBER OVER A RECEIVER (TAP = LOB, HOLD = BULLET)') : 'THROW: 1 2 3 4   (TAP = LOB, HOLD = BULLET)';
           sub = s.inNoRunZone() ? 'NO-RUN ZONE: PASS ONLY   ARROWS: MOVE' : s.qbMayRun() ? 'ARROWS: RUN - CROSS THE LINE TO KEEP IT' : 'ARROWS: SCRAMBLE   QB RUNS ONCE A RUSHER CROSSES';
         }
         else if (c.hasBall) { hint = 'SPACE: JUKE   E: SPIN   SHIFT: SPRINT'; sub = 'ARROWS: RUN'; }
@@ -6432,7 +6520,7 @@ FF.ui = (function () {
     const cond = (md === 'night' ? 'NIGHT GAME' : md === 'dusk' ? 'LATE AFTERNOON' : 'AFTERNOON') + '   ' + (wx === 'rain' ? 'RAIN' : wx === 'snow' ? 'SNOW' : 'CLEAR') + '   ' + game.settings.halfMinutes + ' MINUTE HALVES' + (game.difficulty != null ? '   ' + ['ROOKIE', 'PRO', 'ALL-PRO'][FF.clamp(game.difficulty | 0, 0, 2)] : '');
     FF.rect(x, 0, 186, W, 12, 'rgba(0,0,0,0.75)');
     FF.text(x, cond, W / 2, 189, { font: FONT3x5, color: '#cfd8ff', align: 'center' });
-    if (s > 0.6 && Math.floor(t * 2) % 2 === 0) FF.text(x, 'PRESS ENTER', W / 2, H - 10, { font: FONT3x5, color: '#fff', align: 'center', outline: '#000' });
+    if (s > 0.6 && Math.floor(t * 2) % 2 === 0) FF.text(x, FF.touch && FF.touch.active ? 'TAP TO CONTINUE' : 'PRESS ENTER', W / 2, H - 10, { font: FONT3x5, color: '#fff', align: 'center', outline: '#000' });
   }
 
   /* --------------------------------------------------- coin toss */
@@ -6511,7 +6599,7 @@ FF.ui = (function () {
       FF.text(x, 'PLAYER OF THE GAME: #' + game.potg.info.num + ' ' + game.potg.info.name, W / 2, 205, { font: FONT3x5, color: '#ffe14a', align: 'center' });
     }
     if (game.star && game.humanTeam === game.star.teamIdx) FF.text(x, 'XP EARNED: ' + game.starXP, W / 2, 190, { font: FONT3x5, color: '#8cf38c', align: 'center' });
-    if (Math.floor(t * 2) % 2 === 0) FF.text(x, 'PRESS ENTER', W / 2, H - 6, { font: FONT3x5, color: '#fff', align: 'center' });
+    if (Math.floor(t * 2) % 2 === 0) FF.text(x, FF.touch && FF.touch.active ? 'TAP TO CONTINUE' : 'PRESS ENTER', W / 2, H - 6, { font: FONT3x5, color: '#fff', align: 'center' });
   }
   function drawPause(x, game, t) {
     FF.rect(x, 0, 0, W, H, 'rgba(0,0,0,0.55)');
@@ -6522,8 +6610,8 @@ FF.ui = (function () {
     const touch = FF.touch && FF.touch.active;
     FF.text(x, touch ? 'TAP AN ITEM   BACK: RESUME' : 'UP/DOWN: PICK   ENTER: SELECT   ESC: RESUME   M: ' + (FF.settings.sfx ? 'MUTE' : 'UNMUTE'), W / 2, 128, { font: FONT3x5, color: '#cfd8ff', align: 'center' });
     FF.rect(x, 70, 138, 180, 1, '#4a6ab0');
-    FF.text(x, touch ? 'A: SNAP / JUKE / PULL / DIVE   B: SPIN / SWAT' : 'SPACE: SNAP / JUKE / PULL   1-4: THROW   E: SPIN / SWAT', W / 2, 144, { font: FONT3x5, color: '#aaa', align: 'center' });
-    FF.text(x, touch ? 'TAP A WINDOW: THROW (HOLD = BULLET)   STICK: MOVE' : 'SHIFT: SPRINT   TAB: SWITCH   ARROWS OR WASD: MOVE', W / 2, 152, { font: FONT3x5, color: '#aaa', align: 'center' });
+    FF.text(x, touch ? 'RIGHT BUTTONS: SNAP / JUKE / PULL / DIVE / SPIN / SWAT' : 'SPACE: SNAP / JUKE / PULL   1-4: THROW   E: SPIN / SWAT', W / 2, 144, { font: FONT3x5, color: '#aaa', align: 'center' });
+    FF.text(x, touch ? (FF.settings.passView === 'field' ? 'TAP A RECEIVER: THROW (HOLD = BULLET)   STICK: MOVE' : 'TAP A WINDOW: THROW (HOLD = BULLET)   STICK: MOVE') : 'SHIFT: SPRINT   TAB: SWITCH   ARROWS OR WASD: MOVE', W / 2, 152, { font: FONT3x5, color: '#aaa', align: 'center' });
     FF.text(x, game.teams[0].id + ' ' + game.score[0] + ' - ' + game.score[1] + ' ' + game.teams[1].id, W / 2, 166, { font: FONT3x5, color: '#aaa', align: 'center' });
   }
 
@@ -6542,7 +6630,7 @@ FF.ui = (function () {
       return;
     }
     const lines = touch
-      ? (side === 'off' ? ['A: SNAP THE BALL', 'TAP A RECEIVER WINDOW TO THROW (HOLD = BULLET)', 'STICK: MOVE   A: JUKE   B: SPIN   SPRINT: HOLD'] : ['STICK: MOVE   SWITCH: CHANGE PLAYER', 'A: PULL THE FLAG (OR LUNGE)   B: SWAT A PASS', 'SPRINT: HOLD'])
+      ? (side === 'off' ? ['TAP SNAP TO SNAP THE BALL - THE STICK APPEARS UNDER YOUR LEFT THUMB', FF.settings.passView === 'field' ? 'TAP A RECEIVER ON THE FIELD TO THROW (HOLD = BULLET)' : 'TAP A RECEIVER WINDOW TO THROW (HOLD = BULLET)', 'RIGHT-HAND BUTTONS: JUKE, SPIN, HOLD SPRINT'] : ['STICK: MOVE   SWITCH: CHANGE PLAYER', 'RIGHT-HAND BUTTONS: PULL THE FLAG (OR LUNGE), SWAT A PASS', 'HOLD SPRINT TO RUN FASTER (~3 SECONDS A PLAY)'])
       : (side === 'off' ? ['SPACE: SNAP THE BALL', '1 2 3 4: THROW TO THAT RECEIVER (HOLD = BULLET)', 'ARROWS: MOVE   SPACE: JUKE   E: SPIN   SHIFT: SPRINT'] : ['ARROWS: MOVE   TAB: SWITCH PLAYER', 'SPACE: PULL THE FLAG (OR LUNGE)   E: SWAT A PASS', 'SHIFT: SPRINT']);
     lines.forEach((l, i) => FF.text(x, l, W / 2, 102 + i * 9, { font: FONT3x5, color: '#fff', align: 'center' }));
     FF.text(x, touch ? 'MENU: PAUSE / QUIT      TAP TO START' : 'ESC: PAUSE / QUIT      PRESS ANY KEY TO START', W / 2, 134, { font: FONT3x5, color: Math.floor(t * 2) % 2 ? '#cfd8ff' : '#fff', align: 'center' });
@@ -6847,7 +6935,7 @@ FF.touch = (function () {
           return { name: 'pre-def', buttons: ['MENU', 'SW', 'AUD', 'ART'], stick: true };
         }
         if (c && c.side === 'off') {
-          if (c === s.qb && c.hasBall && !s.handedOff) return { name: 'qb', buttons: ['MENU', 'A', 'Bb', 'SPR'], labels: { A: 'RUN', Bb: 'WINDOWS' }, stick: true, windows: true };
+          if (c === s.qb && c.hasBall && !s.handedOff) return FF.settings.passView === 'field' ? { name: 'qb', buttons: ['MENU', 'A', 'SPR'], labels: { A: 'RUN' }, stick: true, windows: true } : { name: 'qb', buttons: ['MENU', 'A', 'Bb', 'SPR'], labels: { A: 'RUN', Bb: 'WINDOWS' }, stick: true, windows: true };
           if (c.hasBall) return { name: 'carry', buttons: ['MENU', 'A', 'Bb', 'SPR'], labels: { A: 'JUKE', Bb: 'SPIN' }, stick: true };
           return { name: 'rec', buttons: ['MENU', 'A', 'SPR'], labels: { A: s.ball.state === 'air' ? 'DIVE' : (s.star ? 'CALL' : 'DIVE') }, stick: true };
         }
@@ -6922,7 +7010,10 @@ FF.touch = (function () {
     let rx = ww - m;
     const showFS = !T.standalone && !document.fullscreenElement && document.fullscreenEnabled;
     if (showFS) { rx -= u * 0.7; place('FS', rx, top, u * 0.7, u * 0.7); rx -= u * 0.15; }
-    for (const k of ['DONE', 'SPD', 'CAM', 'TO', 'ART']) if (set.has(k)) { const bw = k === 'ART' ? u * 1.7 : u * 1.3; rx -= bw; place(k, rx, top, bw, u * 0.7); rx -= u * 0.15; }
+    if (column) {   // wide side bars: the top-right buttons stack down the right bar so none covers the scoreboard
+      let ty = top + (showFS ? u * 0.85 : 0); const bw = Math.min(u * 1.7, bar - m * 2);
+      for (const k of ['DONE', 'SPD', 'CAM', 'TO', 'ART']) if (set.has(k)) { place(k, ww - m - bw, ty, bw, u * 0.7); ty += u * 0.85; }
+    } else for (const k of ['DONE', 'SPD', 'CAM', 'TO', 'ART']) if (set.has(k)) { const bw = k === 'ART' ? u * 1.7 : u * 1.3; rx -= bw; place(k, rx, top, bw, u * 0.7); rx -= u * 0.15; }
     if (set.has('OK')) place('OK', ww - u * 1.6 - m, wh - u * 0.9 - m, u * 1.6, u * 0.8);
     if (set.has('TYPE')) place('TYPE', ww / 2 - u * 1.1, wh - u * 0.9 - m, u * 2.2, u * 0.8);
     if (set.has('DEL')) place('DEL', ww / 2 + u * 1.3, wh - u * 0.9 - m, u * 1.2, u * 0.8);
@@ -6935,12 +7026,17 @@ FF.touch = (function () {
   /* ---------------------------------------------------------- input */
   function canvasPt(cx, cy) { const r = FF.canvasRect || { x: 0, y: 0, w: W, h: H }; return { x: (cx - r.x) / (r.w / W), y: (cy - r.y) / (r.h / H) }; }
   function hitButton(x, y) { for (const k in rects) { const r = rects[k]; if (x >= r.x - 6 && x <= r.x + r.w + 6 && y >= r.y - 6 && y <= r.y + r.h + 6) return k; } return null; }
-  function windowAt(x, y) {   // receiver window index under a canvas point, when the windows are open
-    const g = game(); if (!g || g.state !== 'play' || !g.sim || !g.sim.windowsOpen) return -1;
-    const WIN = FF.field.WIN, recs = g.sim.windowTargets || [];
-    for (let i = 0; i < 3; i++) { const wx = WIN.x0 + i * (WIN.w + WIN.gap); if (recs[i] && x >= wx - 2 && x <= wx + WIN.w + 2 && y >= WIN.y - 2 && y <= WIN.y + WIN.h + 10) return i; }
-    if (recs[3] && x >= W - 46 && y >= WIN.y + WIN.h && y <= WIN.y + WIN.h + 18) return 3;
-    return -1;
+  // throw key (T1-T4) under a canvas point: a receiver window when the windows are open, or the receiver
+  // himself on the field (PASSING: TAP RECEIVER)
+  function windowAt(x, y) {
+    const g = game(); if (!g || g.state !== 'play' || !g.sim) return null;
+    const recs = g.sim.windowTargets || [];
+    if (g.sim.fieldTargets) { const r = FF.field.fieldTargetAt(g.sim, g.cam, FF.field.MAIN_VP, x, y); return r ? 'T' + r.label : null; }
+    if (!g.sim.windowsOpen) return null;
+    const WIN = FF.field.WIN;
+    for (let i = 0; i < 3; i++) { const wx = WIN.x0 + i * (WIN.w + WIN.gap); if (recs[i] && x >= wx - 2 && x <= wx + WIN.w + 2 && y >= WIN.y - 2 && y <= WIN.y + WIN.h + 10) return 'T' + recs[i].label; }
+    if (recs[3] && x >= W - 46 && y >= WIN.y + WIN.h && y <= WIN.y + WIN.h + 18) return 'T' + recs[3].label;
+    return null;
   }
   function setDirs(dx, dy) {
     const len = Math.hypot(dx, dy); const inp = FF.input;
@@ -6987,8 +7083,8 @@ FF.touch = (function () {
     }
     if (isMouse) { touches.set(id, rec); return; }                             // the mouse never taps menus for you
     const inZone = (FF.zones || []).some(z => c.x >= z.x && c.x <= z.x + z.w && c.y >= z.y && c.y <= z.y + z.h);   // a drawn button beats the stick
-    const wi = ctx.windows && !inZone ? windowAt(c.x, c.y) : -1;
-    if (wi >= 0) { rec.role = 'window'; rec.win = wi; inp.setVirtual('T' + (wi + 1), true); }
+    const wi = ctx.windows && !inZone ? windowAt(c.x, c.y) : null;
+    if (wi) { rec.role = 'window'; rec.win = wi; inp.setVirtual(wi, true); }
     else if (ctx.stick && !stick && !inZone && X < window.innerWidth * 0.5) {
       rec.role = 'stick'; stick = { id, ox: X, oy: Y };
       stickBase.style.left = X + 'px'; stickBase.style.top = Y + 'px'; stickBase.style.display = 'block';
@@ -7015,7 +7111,7 @@ FF.touch = (function () {
     const ctx = T.ctx || context(); const inp = FF.input; const R = inp.retro;
     const rec = touches.get(id); if (!rec) return; touches.delete(id);
     if (rec.role === 'button') { btnEls[rec.btn] && btnEls[rec.btn].classList.remove('on'); if (B[rec.btn].b) inp.setVirtual(B[rec.btn].b, false); return; }
-    if (rec.role === 'window') { inp.setVirtual('T' + (rec.win + 1), false); return; }
+    if (rec.role === 'window') { inp.setVirtual(rec.win, false); return; }
     if (rec.role === 'stick') { stick = null; stickBase.style.display = 'none'; stickKnob.style.display = 'none'; setDirs(0, 0); return; }
     if (rec.role === 'lobtap') return;
     if (rec.role === 'aim') { const c = canvasPt(X, Y); R.x = c.x; R.y = c.y; R.aiming = false; R.release = true; return; }
@@ -7551,9 +7647,9 @@ FF.career = (function () {
   function header(x, title, sub) {
     FF.rect(x, 0, 0, W, 26, '#111'); FF.rect(x, 0, 26, W, 2, '#ffe14a');
     FF.text(x, title, W / 2, 5, { scale: 2, color: '#ffe14a', outline: '#000', align: 'center', italic: true, bevel: { light: '#fff6b0', dark: '#8a6a00' } });
-    if (sub) FF.text(x, sub, W / 2, H - 7, { font: FONT3x5, color: '#ddd', align: 'center' });
+    if (sub) FF.text(x, FF.tt(sub), W / 2, H - 7, { font: FONT3x5, color: '#ddd', align: 'center' });
   }
-  function footer(x, msg) { FF.rect(x, 0, H - 8, W, 8, 'rgba(0,0,0,0.7)'); FF.text(x, msg, W / 2, H - 7, { font: FONT3x5, color: '#ddd', align: 'center' }); }
+  function footer(x, msg) { msg = FF.tt(msg); FF.rect(x, 0, H - 8, W, 8, 'rgba(0,0,0,0.7)'); FF.text(x, msg, W / 2, H - 7, { font: FONT3x5, color: '#ddd', align: 'center' }); }
   // a small on-screen button for touch players (drawn only once a finger has touched the screen); keys = what it presses
   function tbtn(x, label, px, py, w, keys, hot) {
     if (!(FF.touch && FF.touch.active)) return;
@@ -7638,7 +7734,7 @@ FF.career = (function () {
       FF.rect(x, fx, fy - 8, 2, 20, '#ddd'); for (let i = 0; i < 12; i++) FF.rect(x, fx + 2 + i, fy - 8 + Math.round(Math.sin(t * 6 + i * 0.6) * 1.5), 1, 8, i % 2 ? '#ffe400' : '#f0d000');
       FF.rect(x, 30, 74, 260, 9, 'rgba(0,0,0,0.7)');
       FF.text(x, '5-ON-5  *  NO CONTACT  *  PULL THE FLAG', 160, 76, { font: FONT3x5, color: '#cfd8ff', align: 'center' });
-      if (Math.floor(t * 2) % 2 === 0) { FF.rect(x, 110, 186, 100, 12, 'rgba(0,0,0,0.75)'); FF.text(x, 'PRESS ENTER', 160, 188, { scale: 1, color: '#fff', outline: '#000', align: 'center' }); }
+      if (Math.floor(t * 2) % 2 === 0) { FF.rect(x, 110, 186, 100, 12, 'rgba(0,0,0,0.75)'); FF.text(x, FF.touch && FF.touch.active ? 'TAP TO START' : 'PRESS ENTER', 160, 188, { scale: 1, color: '#fff', outline: '#000', align: 'center' }); }
       FF.rect(x, 0, H - 16, W, 16, 'rgba(0,0,0,0.75)');
       FF.text(x, 'ATTRACT MODE: ' + this.demo.teams[0].name + ' VS ' + this.demo.teams[1].name, 160, H - 14, { font: FONT3x5, color: '#aaa', align: 'center' });
       FF.text(x, 'AN ORIGINAL 16-BIT STYLE GAME. NO LICENSED TEAMS OR PLAYERS.', 160, H - 7, { font: FONT3x5, color: '#777', align: 'center' });
@@ -7662,7 +7758,7 @@ FF.career = (function () {
       menuList(x, this.items, this.sel, 110, 50, { step: 17, scale: 1 });
       const desc = ['ONE GAME, ANY TWO TEAMS, YOU VS THE CPU.', 'CREATE A PLAYER AND LIVE A CAREER LOCKED TO HIM.', 'FANTASY DRAFT A TEAM, THEN COACH IT THROUGH SEASONS.', 'RUN ANY PLAY VS ANY COVERAGE, NO CLOCK.', 'EDIT ROUTES, READS AND RUNS; BUILD YOUR OWN PLAYS.', 'RENAME, RENUMBER AND RESTYLE THE PLAYERS ON ANY TEAM.', 'GAME LENGTH, RULES, DIFFICULTY, DISPLAY.', 'CONTROLS AND THE RULES OF 5-ON-5 FLAG.'][this.sel];
       footer(x, desc);
-      FF.text(x, 'ARROWS: MOVE   ENTER: SELECT   ESC: BACK', W / 2, H - 16, { font: FONT3x5, color: '#aaa', align: 'center' });
+      FF.text(x, FF.touch && FF.touch.active ? 'TAP AN ITEM TO OPEN IT' : 'ARROWS: MOVE   ENTER: SELECT   ESC: BACK', W / 2, H - 16, { font: FONT3x5, color: '#aaa', align: 'center' });
     },
   };
 
@@ -7841,6 +7937,7 @@ FF.career = (function () {
       return [
         ['PLAY STYLE', { classic: "CLASSIC '94", retro: 'RETRO SIDELINE', overhead: 'RETRO OVERHEAD' }[s.playStyle] || "CLASSIC '94", v => { const o = ['classic', 'retro', 'overhead']; s.playStyle = o[(o.indexOf(s.playStyle) + v + 3) % 3]; }],
         ['GAME SPEED', { slow: 'SLOW', normal: 'NORMAL', fast: 'FAST' }[s.gameSpeed] || 'NORMAL', v => { const o = ['slow', 'normal', 'fast']; s.gameSpeed = o[FF.clamp(o.indexOf(s.gameSpeed || 'normal') + v, 0, 2)]; }],
+        ['PASSING (CLASSIC)', s.passView === 'field' ? 'TAP RECEIVER' : "'94 WINDOWS", () => { s.passView = s.passView === 'field' ? 'windows' : 'field'; }],
         ['THROW AIM (RETRO)', { low: 'LOW SENSITIVITY', medium: 'MEDIUM', high: 'HIGH SENSITIVITY' }[s.aimSens] || 'MEDIUM', v => { const o = ['low', 'medium', 'high']; s.aimSens = o[FF.clamp(o.indexOf(s.aimSens || 'medium') + v, 0, 2)]; }],
         ['HALF LENGTH', s.halfMinutes + ' MIN', v => { const o = [2, 4, 6, 10]; s.halfMinutes = o[FF.clamp(o.indexOf(s.halfMinutes) + v, 0, 3)]; }],
         ['DIFFICULTY', ['ROOKIE', 'PRO', 'ALL-PRO'][s.difficulty], v => { s.difficulty = FF.clamp(s.difficulty + v, 0, 2); }],
@@ -7848,7 +7945,7 @@ FF.career = (function () {
         ['DOWNS TO SCORE', String(s.downsToScore), v => { s.downsToScore = FF.clamp(s.downsToScore + v, 3, 4); }],
         ['TIMEOUTS PER HALF', String(s.timeouts), v => { s.timeouts = FF.clamp(s.timeouts + v, 1, 2); }],
         ['LAST 2 MIN CLOCK STOPS', s.twoMinuteStops ? 'ON' : 'OFF', () => { s.twoMinuteStops = !s.twoMinuteStops; }],
-        ['CLOCK RUN-OFF BETWEEN PLAYS', (s.runoff == null ? 15 : s.runoff) === 0 ? 'NONE' : (s.runoff == null ? 15 : s.runoff) + ' SEC', v => { const o = [0, 10, 15, 20, 25]; s.runoff = o[FF.clamp(o.indexOf(s.runoff == null ? 15 : s.runoff) + v, 0, 4)]; }],
+        ['RUN-OFF BETWEEN PLAYS', (s.runoff == null ? 15 : s.runoff) === 0 ? 'NONE' : (s.runoff == null ? 15 : s.runoff) + ' SEC', v => { const o = [0, 10, 15, 20, 25]; s.runoff = o[FF.clamp(o.indexOf(s.runoff == null ? 15 : s.runoff) + v, 0, 4)]; }],
         ['PENALTIES', s.penalties ? 'ON' : 'OFF (ARCADE)', () => { s.penalties = !s.penalties; }],
         ['INTERCEPTION SPOT', s.intSpot === 'spot' ? 'SPOT OF PULL' : 'OWN 5', () => { s.intSpot = s.intSpot === 'spot' ? 'own5' : 'spot'; }],
         ['QB CAN RUN', { never: 'NEVER', rusher: 'ONCE RUSHER CROSSES', always: 'ALWAYS' }[s.qbRun || 'always'], v => { const o = ['never', 'rusher', 'always']; s.qbRun = o[FF.clamp(o.indexOf(s.qbRun || 'always') + v, 0, 2)]; }],
@@ -7872,22 +7969,19 @@ FF.career = (function () {
     draw(x, t) {
       UI.bg(x); header(x, 'OPTIONS');
       const rows = this.rows();
-      // the list is longer than the screen: a 15-row window scrolls with the cursor
-      const VIS = 15; this.top = FF.clamp(this.top || 0, this.sel - VIS + 1, this.sel); this.top = FF.clamp(this.top, 0, Math.max(0, rows.length - VIS));
+      // full-size rows with - / + buttons, a window of 11 that scrolls with the cursor
+      const VIS = 11, step = 16, y0 = 33;
+      this.top = FF.clamp(this.top || 0, this.sel - VIS + 1, this.sel); this.top = FF.clamp(this.top, 0, Math.max(0, rows.length - VIS));
       for (let i = this.top; i < Math.min(rows.length, this.top + VIS); i++) {
         const [k, v] = rows[i];
-        const y = 34 + (i - this.top) * 11; const on = i === this.sel;
-        if (on) FF.text(x, '>', 24, y, { color: '#ffe14a', outline: '#000' });
-        FF.text(x, k, 34, y, { color: on ? '#ffe14a' : '#fff', outline: '#000' });
-        FF.text(x, '< ' + v + ' >', 250, y, { color: on ? '#ffe14a' : '#fff', outline: '#000', align: 'center' });
-        const nav = FF.navSeq(this.sel, i, 'v', rows.length, true);
-        FF.tapZone(20, y - 2, 170, 11, nav.concat(['RIGHT'])); FF.tapZone(190, y - 2, 60, 11, nav.concat(['LEFT'])); FF.tapZone(250, y - 2, 70, 11, nav.concat(['RIGHT']));
+        stepperRow(x, { y: y0 + (i - this.top) * step, label: k, value: v, on: i === this.sel, i, sel: this.sel, n: rows.length, x0: 22, x1: W - 22, boxW: 104 });
       }
-      const blink = Math.floor(t * 3) % 2 === 0;
-      const tri = (cx, cy, up) => { x.fillStyle = blink ? '#ffe14a' : '#ddd'; x.beginPath(); x.moveTo(cx - 3, up ? cy + 3 : cy - 3); x.lineTo(cx + 3, up ? cy + 3 : cy - 3); x.lineTo(cx, up ? cy - 1 : cy + 1); x.fill(); };
-      if (this.top > 0) { tri(289, 30, true); FF.text(x, 'MORE', 294, 28, { font: FONT3x5, color: blink ? '#ffe14a' : '#ddd', outline: '#000' }); FF.tapZone(282, 24, 36, 12, ['UP'], 'UP'); }
-      if (this.top + VIS < rows.length) { const yy = 34 + VIS * 11 - 4; tri(289, yy + 3, false); FF.text(x, 'MORE', 294, yy, { font: FONT3x5, color: blink ? '#ffe14a' : '#ddd', outline: '#000' }); FF.tapZone(282, yy - 3, 36, 12, ['DOWN'], 'DOWN'); }
-      footer(x, FF.touch && FF.touch.active ? 'TAP A ROW TO CHANGE IT (LEFT SIDE OF THE VALUE GOES BACK)   BACK: SAVE' : 'LEFT/RIGHT: CHANGE   ESC: SAVE & BACK');
+      const blink = Math.floor(t * 3) % 2 === 0, ac = blink ? '#ffe14a' : '#ddd';
+      const tri = (cx, cy, up) => { x.fillStyle = ac; x.beginPath(); x.moveTo(cx - 4, up ? cy + 3 : cy - 3); x.lineTo(cx + 4, up ? cy + 3 : cy - 3); x.lineTo(cx, up ? cy - 2 : cy + 2); x.fill(); };
+      // scroll buttons at the right edge (big enough for a thumb)
+      if (this.top > 0) { tri(W - 10, y0 + 6, true); FF.tapZone(W - 20, y0 - 4, 20, 22, ['UP'], 'UP'); }
+      if (this.top + VIS < rows.length) { tri(W - 10, y0 + (VIS - 1) * step + 7, false); FF.tapZone(W - 20, y0 + (VIS - 1) * step - 4, 20, 22, ['DOWN'], 'DOWN'); }
+      footer(x, FF.touch && FF.touch.active ? 'TAP - / + TO CHANGE A SETTING   BACK: SAVE' : 'UP/DOWN: SELECT   LEFT/RIGHT OR - / +: CHANGE   ESC: SAVE & BACK');
     },
   };
 
@@ -7941,10 +8035,10 @@ FF.career = (function () {
       ['DEFENSE', [
         'PRE-SNAP: TAB SWITCHES YOUR DEFENDER. Q AUDIBLES.',
         'DO NOT CROSS THE LINE BEFORE THE SNAP: OFFSIDE, 5 YARDS.',
-        'RUSHERS START 7 YARDS OFF THE BALL (THE DASHED LINE).',
+        'ONLY A DEFENDER BEHIND THE DASHED RUSH LINE AT THE SNAP MAY',
+        'RUSH; ANYONE ELSE CROSSING EARLY DRAWS AN ILLEGAL RUSH.',
         'SPACE PULLS THE FLAG WHEN YOU ARE IN REACH. FROM THE',
         'SIDE IS BEST; A RUNNER MID-JUKE OR MID-SPIN SLIPS YOU.',
-        'YOUR FLAG PULL RATING SETS YOUR REACH AND YOUR ODDS.',
         'MISS A RUNNER GOING BY AT SPEED AND HE IS GONE. MISS',
         'A SLOW ONE AND YOU GET ONE MORE GRAB.',
         'SPACE AWAY FROM THE RUNNER LUNGES. E SWATS A PASS.',
@@ -8003,6 +8097,84 @@ FF.career = (function () {
         '(WORST RECORD FIRST) AND FINAL CUTS BACK TO EIGHT.',
       ]],
     ],
+    // the same pages for a touch screen: buttons and gestures instead of keys
+    touchPages: {
+      'CONTROLS': [
+        'TOUCH CONTROLS APPEAR WHEN A FINGER TOUCHES THE SCREEN.',
+        'LEFT THUMB: A FLOATING STICK MOVES YOUR PLAYER.',
+        'RIGHT THUMB: BUTTONS LABELED FOR THE MOMENT - SNAP, JUKE,',
+        'SPIN, PULL, SWAT, DIVE, SPRINT (HOLD), SWITCH, AUD.',
+        'THROW: TAP A RECEIVER WINDOW, OR THE RECEIVER HIMSELF WITH',
+        'OPTIONS > PASSING > TAP RECEIVER. TAP = LOB, HOLD = BULLET.',
+        'SPRINT LASTS ~3 SECONDS A PLAY - WATCH THE BAR UNDER YOU.',
+        'PLAY CALLING: TAP A TILE. FLIP / NO HUDDLE / RESET ARE THE',
+        'BUTTONS ABOVE THE GRID. PLAY ART SHOWS THE CALL ON THE FIELD.',
+        'MENUS: TAP A ROW, - / + TO CHANGE A SETTING. OK AND BACK ARE',
+        'THE CORNER BUTTONS. MENU PAUSES. FULL GOES FULL SCREEN.',
+      ],
+      'RETRO PLAY STYLES': [
+        'OPTIONS > PLAY STYLE: RETRO SIDELINE (A LOW CAMERA ON THE',
+        'NEAR SIDELINE) OR RETRO OVERHEAD (A FLAT TOP-DOWN MAP).',
+        'PLAY CALLING, RULES AND MODES - PRACTICE INCLUDED - ARE THE',
+        'SAME; ONLY THE LIVE PLAY CHANGES. OFFENSE MOVES TO THE RIGHT.',
+        'PRESS AND HOLD ANYWHERE TO SNAP. THE QB DROPS BACK.',
+        'DRAG AWAY FROM WHERE YOU WANT THE BALL: A DOTTED ARC AND A',
+        'RING SHOW WHERE IT LANDS. RELEASE TO THROW - LEAD HIM.',
+        'DRAG BACK INTO THE BACKFIELD AND RELEASE TO RUN.',
+        'A SECOND FINGER SWITCHES LOB / BULLET.',
+        'CARRIER: SWIPE UP/DOWN TO CUT, AHEAD TO BURST, BACK TO',
+        'STUTTER, OR HOLD AND DRAG TO STEER. DEFENSE: HOLD SKIP.',
+      ],
+      'OFFENSE': [
+        'PRE-SNAP: SNAP. AUD CALLS AN AUDIBLE (TAP ONE OF THREE).',
+        'HOLD MOTION + THE STICK SENDS RECEIVER 1 IN MOTION.',
+        'QB: THE PASSING WINDOWS OPEN AFTER THE SNAP (OR, WITH',
+        'PASSING > TAP RECEIVER, BADGES SHOW OVER EACH RECEIVER).',
+        'THE TAG IS THE READ: OPEN, LOB IT (MAN UNDERNEATH), BULLET',
+        '(MAN OVER THE TOP), COVERED. TAP = LOB, HOLD = BULLET.',
+        'THE STICK MOVES THE QB. CROSS THE LINE TO RUN WITH IT -',
+        'EXCEPT IN A NO-RUN ZONE (HATCHED TURF).',
+        'HANDOFFS AND PITCHES HAPPEN BY THEMSELVES ON RUN PLAYS.',
+        'BALL IN THE AIR: DIVE. CARRIER: JUKE, SPIN, SPRINT.',
+        '7-SECOND PASS CLOCK.',
+      ],
+      'DEFENSE': [
+        'PRE-SNAP: SWITCH CHANGES YOUR DEFENDER. AUD AUDIBLES.',
+        'DO NOT CROSS THE LINE BEFORE THE SNAP: OFFSIDE, 5 YARDS.',
+        'ONLY A DEFENDER BEHIND THE DASHED RUSH LINE (7 YARDS) AT THE',
+        'SNAP MAY RUSH. ANYONE ELSE CROSSING EARLY: ILLEGAL RUSH.',
+        'PULL TAKES THE FLAG WHEN YOU ARE IN REACH. FROM THE SIDE IS',
+        'BEST; A RUNNER MID-JUKE OR MID-SPIN SLIPS YOU.',
+        'MISS A RUNNER GOING BY AT SPEED AND HE IS GONE.',
+        'PULL AWAY FROM THE RUNNER LUNGES. SWAT KNOCKS DOWN A PASS.',
+        'REACH THE QB IN THE POCKET AND PULL FOR A SACK.',
+        'ON ROOKIE (OR WITH AUTO FLAG PULL ON) PULLS ARE AUTOMATIC.',
+      ],
+      'PLAYBOOK EDITOR': [
+        'PLAYBOOK (MAIN MENU) OPENS ANY FORMATION. EACH ONE HOLDS',
+        'EIGHT PLAYS; A NEW PLAY ALWAYS REPLACES ONE OF THE EIGHT.',
+        'TAP A SLOT, THEN TAP A PLAYER ON THE FIELD (OR < PLAYER >).',
+        '< ROUTE > CYCLES HIS ROUTE THROUGH THE LIBRARY.',
+        'DRAW ROUTE: TAP THE FIELD TO DROP UP TO 5 POINTS, UNDO,',
+        'FINISH. THROW KEY SETS WHICH NUMBER THROWS TO HIM.',
+        'MAKE IT A RUN: THE PICKED PLAYER CARRIES; RUN PATH DRAWS',
+        'HIS PATH, MAKE PITCH / HANDOFF SWITCHES THE EXCHANGE.',
+        'RENAME, THEN SAVE TO SLOT. RESTORE ON THE SLOT SCREEN',
+        'PUTS BACK THE ORIGINAL. THE CPU KEEPS THE STOCK BOOK.',
+      ],
+      'FRANCHISE MODE': [
+        'PICK A TEAM. EVERY PLAYER IN THE LEAGUE GOES INTO THE',
+        'POOL. A LOTTERY DRAWS THE DRAFT ORDER, THEN A SNAKE',
+        'FANTASY DRAFT RUNS 8 ROUNDS. ON YOUR PICK: TAP A PLAYER,',
+        'TAP AGAIN (OR DRAFT) TO TAKE HIM. FILTER AND SORT ARE THE',
+        'BUTTONS ON TOP; AUTO TAKES THE BEST AVAILABLE; SIM RUNS',
+        'THE CPU PICKS. THEN PLAY OR SIM EACH GAME, SET THE DEPTH',
+        'CHART (THE TOP FIVE START), WATCH STANDINGS AND LEADERS.',
+        'TRADES: ONE-FOR-ONE, THREE A SEASON, DEADLINE WEEK 5.',
+        'OFFSEASON: PLAYERS AGE, A TWO-ROUND ROOKIE DRAFT (WORST',
+        'RECORD FIRST) AND FINAL CUTS BACK TO EIGHT.',
+      ],
+    },
     enter() { this.page = 0; },
     update(dt, input) {
       if (input.pressed('RIGHT') || input.pressed('DOWN') || confirm(input)) { this.page = (this.page + 1) % this.pages.length; FF.audio.play('tick'); }
@@ -8013,10 +8185,12 @@ FF.career = (function () {
       UI.bg(x); const p = this.pages[this.page];
       header(x, p[0]);
       FF.rect(x, 8, 34, W - 16, 176, '#000'); FF.panel(x, 9, 35, W - 18, 174, '#1a2240', '#4a5a90', '#0a0c20');
-      p[1].forEach((ln, i) => FF.text(x, ln, 16, 42 + i * 14, { font: FONT3x5, color: i === 0 ? '#ffe14a' : '#fff', scale: 1 }));
+      const touch = FF.touch && FF.touch.active;
+      const lines = (touch && this.touchPages[p[0]]) || p[1];
+      lines.forEach((ln, i) => FF.text(x, ln, 16, 42 + i * 14, { font: FONT3x5, color: i === 0 ? '#ffe14a' : '#fff', scale: 1 }));
       FF.text(x, 'PAGE ' + (this.page + 1) + ' / ' + this.pages.length, W / 2, 200, { font: FONT3x5, color: '#aaa', align: 'center' });
       FF.tapZone(0, 30, W / 2, 180, ['LEFT'], 'PREV'); FF.tapZone(W / 2, 30, W / 2, 180, ['RIGHT'], 'NEXT');
-      footer(x, 'LEFT/RIGHT: PAGE   ESC: BACK');
+      footer(x, touch ? 'TAP THE RIGHT HALF: NEXT PAGE   LEFT HALF: BACK A PAGE   BACK: MENU' : 'LEFT/RIGHT: PAGE   ESC: BACK');
     },
   };
 
@@ -8336,10 +8510,11 @@ FF.career = (function () {
       FF.rect(x, 20, 50, 60, 70, '#000'); FF.panel(x, 21, 51, 58, 68, '#2a4a2a', '#5a8a5a', '#102010');
       FF.sprites.drawAt(x, sp, 50, 108, 1.5);
       if (this.step === 0) {
-        FF.text(x, 'TYPE A NAME (LETTERS, NUMBERS, SPACE)', 100, 56, { font: FONT3x5, color: '#ddd' });
+        const tch = FF.touch && FF.touch.active;
+        FF.text(x, tch ? 'TAP KEYBOARD AND TYPE A NAME' : 'TYPE A NAME (LETTERS, NUMBERS, SPACE)', 100, 56, { font: FONT3x5, color: '#ddd' });
         FF.rect(x, 100, 66, 180, 16, '#000'); FF.rect(x, 101, 67, 178, 14, '#1a1a2a');
         FF.text(x, this.name + (Math.floor(t * 2) % 2 ? '_' : ' '), 106, 70, { color: '#ffe14a' });
-        FF.text(x, 'ENTER: NEXT   BACKSPACE: DELETE', 100, 90, { font: FONT3x5, color: '#aaa' });
+        FF.text(x, tch ? 'OK: NEXT   DEL: DELETE A LETTER' : 'ENTER: NEXT   BACKSPACE: DELETE', 100, 90, { font: FONT3x5, color: '#aaa' });
       } else if (this.step === 2) {
         const rows = [['OFFENSE', POS_NAME[this.pos]], ['DEFENSE', DPOS_NAME[this.dpos]]];
         rows.forEach(([k, v], i) => stepperRow(x, { y: 56 + i * 18, label: k, value: v, on: this.sel === i, i, sel: this.sel, n: 2, x0: 108, x1: W - 8 }));
@@ -9060,7 +9235,7 @@ FF.career = (function () {
       const last = d.log.slice(-3).map(l => l.pick + '. ' + D.teamById(l.team).name.slice(0, 8) + ': ' + l.name + ' ' + l.pos).join('   ');
       if (this.anim) { FF.rect(x, 0, 200, W, 12, '#3a3010'); FF.text(x, this.anim.text, W / 2, 203, { font: FONT3x5, color: '#ffe14a', align: 'center' }); }
       else FF.text(x, last || 'THE DRAFT IS UNDER WAY', W / 2, 203, { font: FONT3x5, color: '#aaa', align: 'center' });
-      FF.text(x, this.isMine() ? 'SPACE: DRAFT   E: AUTO PICK   C: FILTER   LEFT/RIGHT: SORT' : (this.simming ? 'SIMULATING TO YOUR PICK...' : 'ENTER: SIM TO YOUR PICK'), W / 2, 214, { font: FONT3x5, color: '#ddd', align: 'center' });
+      FF.text(x, FF.tt(this.isMine() ? (FF.touch && FF.touch.active ? 'YOUR PICK: TAP A PLAYER, TAP AGAIN TO DRAFT HIM' : 'SPACE: DRAFT   E: AUTO PICK   C: FILTER   LEFT/RIGHT: SORT') : (this.simming ? 'SIMULATING TO YOUR PICK...' : 'ENTER: SIM TO YOUR PICK')), W / 2, 214, { font: FONT3x5, color: '#ddd', align: 'center' });
       if (this.isMine()) { tbtn(x, 'DRAFT', 210, 200, 44, ['START'], true); tbtn(x, 'AUTO', 260, 200, 44, ['B']); } else if (!this.simming) tbtn(x, 'SIM TO MY PICK', 210, 200, 94, ['START'], true);
     },
   };
@@ -9083,7 +9258,7 @@ FF.career = (function () {
     draw(x, t) {
       UI.bg(x); header(x, 'FINAL CUTS');
       const f = this.fr; if (!f) return; const roster = f.rosters[f.teamId]; const need = Math.max(0, roster.length - 8);
-      FF.text(x, 'RELEASE ' + need + ' TO GET TO EIGHT.   SPACE: MARK   C: CPU PICKS   ENTER: CONFIRM', W / 2, 31, { font: FONT3x5, color: '#ddd', align: 'center' });
+      FF.text(x, 'RELEASE ' + need + ' TO GET TO EIGHT.   ' + (FF.touch && FF.touch.active ? 'TAP A PLAYER TO MARK HIM' : 'SPACE: MARK   C: CPU PICKS   ENTER: CONFIRM'), W / 2, 31, { font: FONT3x5, color: '#ddd', align: 'center' });
       FF.rect(x, 30, 40, 276, 9, '#101018');
       ['NO', 'NAME', 'POS', 'DEF', 'AGE', 'OVR', 'VAL', 'STATUS'].forEach((h, i) => FF.text(x, h, [40, 60, 130, 150, 170, 192, 216, 246][i], 42, { font: FONT3x5, color: '#ffe14a' }));
       roster.forEach((p, i) => {
@@ -9098,7 +9273,7 @@ FF.career = (function () {
         FF.tapZone(30, y - 2, 276, 13, FF.navSeq(this.sel, i, 'v', roster.length, true).concat(['A']), 'MARK');
       });
       tbtn(x, 'CPU PICKS', 60, 196, 70, ['C']); tbtn(x, 'CONFIRM', 190, 196, 70, ['START'], this.marked.length === need);
-      footer(x, this.marked.length === need ? 'ENTER: CONFIRM CUTS AND START THE SEASON' : 'SPACE: MARK   C: AUTO   MARK ' + (need - this.marked.length) + ' MORE');
+      footer(x, this.marked.length === need ? 'ENTER: CONFIRM CUTS AND START THE SEASON' : (FF.touch && FF.touch.active ? 'TAP TO MARK   MARK ' : 'SPACE: MARK   C: AUTO   MARK ') + (need - this.marked.length) + ' MORE');
     },
   };
 
@@ -9118,7 +9293,7 @@ FF.career = (function () {
     draw(x, t) {
       UI.bg(x); header(x, 'DEPTH CHART');
       const fr = this.fr; if (!fr) return; const roster = fr.rosters[fr.teamId]; const tm = D.teamById(fr.teamId);
-      FF.text(x, 'THE TOP FIVE START. SPACE GRABS A PLAYER, SPACE AGAIN SWAPS HIM. C: AUTO.', W / 2, 31, { font: FONT3x5, color: '#ddd', align: 'center' });
+      FF.text(x, FF.touch && FF.touch.active ? 'THE TOP FIVE START. TAP A PLAYER, THEN THE ONE TO SWAP WITH.' : 'THE TOP FIVE START. SPACE GRABS A PLAYER, SPACE AGAIN SWAPS HIM. C: AUTO.', W / 2, 31, { font: FONT3x5, color: '#ddd', align: 'center' });
       const pc = posCounts(roster.slice(0, 5));
       FF.text(x, 'STARTERS: QB ' + pc.QB + '  C ' + pc.C + '  WR ' + pc.WR + '  RB ' + pc.RB + (pc.QB !== 1 || pc.C !== 1 || pc.WR !== 2 || pc.RB !== 1 ? '   (QB C WR WR RB IS THE NORMAL SET)' : ''), W / 2, 40, { font: FONT3x5, color: pc.QB === 1 && pc.C === 1 && pc.WR === 2 && pc.RB === 1 ? '#8cf38c' : '#ff9a6a', align: 'center' });
       FF.rect(x, 30, 47, 276, 9, '#101018');
@@ -9191,7 +9366,7 @@ FF.career = (function () {
       if (this.msgT > 0 && this.msg) FF.text(x, this.msg.slice(0, 70), W / 2, 189, { font: FONT3x5, color: '#ffe14a', align: 'center' });
       else FF.text(x, 'OFFER ' + give.name + ' (VAL ' + C.tradeValue(give) + ') FOR ' + get.name + ' (VAL ' + C.tradeValue(get) + ')', W / 2, 189, { font: FONT3x5, color: '#ddd', align: 'center' });
       FF.text(x, 'TRADES USED ' + (f.trades || 0) + '/3   DEADLINE: WEEK 5   ' + (D.ovr(get) > D.ovr(give) ? 'THEY WILL WANT VALUE BACK' : 'CPU TEAMS LIKE YOUTH AND NEED'), W / 2, 197, { font: FONT3x5, color: '#888', align: 'center' });
-      footer(x, 'LEFT/RIGHT: SIDE   UP/DOWN: PLAYER   C: OTHER TEAM   SPACE: PROPOSE   ESC: BACK');
+      footer(x, FF.touch && FF.touch.active ? 'TAP YOUR PLAYER AND THEIRS   PROPOSE / NEXT TEAM: THE BUTTONS   BACK: DONE' : 'LEFT/RIGHT: SIDE   UP/DOWN: PLAYER   C: OTHER TEAM   SPACE: PROPOSE   ESC: BACK');
     },
   };
 
@@ -9249,7 +9424,7 @@ FF.career = (function () {
       const f = this.fr; if (!f) return; const ls = f.leagueStats || {};
       const rows = Object.keys(ls).map(id => Object.assign({ id }, ls[id])).filter(r => this.tab === 0 || r.team === f.teamId);
       const cats = [['PASSING YDS', 'passYds'], ['PASS TD', 'passTD'], ['REC YDS', 'recYds'], ['RECEPTIONS', 'recs'], ['REC TD', 'recTD'], ['FLAG PULLS', 'pulls'], ['INTERCEPTIONS', 'ints'], ['SACKS', 'sacks']];
-      FF.text(x, 'LEFT/RIGHT: LEAGUE / TEAM.  SIMMED GAMES GET A GENERATED BOX SCORE.', W / 2, 31, { font: FONT3x5, color: '#ddd', align: 'center' });
+      FF.text(x, (FF.touch && FF.touch.active ? 'TAP TO SWITCH LEAGUE / TEAM.' : 'LEFT/RIGHT: LEAGUE / TEAM.') + '  SIMMED GAMES GET A GENERATED BOX SCORE.', W / 2, 31, { font: FONT3x5, color: '#ddd', align: 'center' });
       const n = this.tab === 0 ? 3 : 2;
       cats.forEach(([name, k], i) => {
         const y = 42 + i * 19; const top = rows.filter(r => r[k]).sort((a, b) => b[k] - a[k]).slice(0, n);
@@ -9361,6 +9536,9 @@ FF.career = (function () {
   const MAX_WP = 5;
   const FIELD = { x: 8, y: 34, w: 150, h: 170, ppy: 5, losFrac: 0.78 };   // 30 yd wide, ~34 yd deep (8 behind the line)
   const confirm = input => input.pressed('START');
+  const touchOn = () => FF.touch && FF.touch.active;
+  // a touch button (drawn only once a finger has touched the screen)
+  function tb(x, label, px, py, w, keys, hot) { if (FF.M && FF.M.tbtn) FF.M.tbtn(x, label, px, py, w, keys, hot); }
 
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
   // library route -> editor waypoints in absolute yards (x right+, y downfield+) for a slot
@@ -9444,6 +9622,13 @@ FF.career = (function () {
         const step = 1;
         if (input.pressed('LEFT')) c.x = Math.max(-14, c.x - step); if (input.pressed('RIGHT')) c.x = Math.min(14, c.x + step);
         if (input.pressed('UP')) c.y = Math.min(26, c.y + step); if (input.pressed('DOWN')) c.y = Math.max(-8, c.y - step);
+        // touch: a tap on the mini field moves the cursor there and drops a waypoint
+        for (const tp of (input.taps ? input.taps() : [])) {
+          const F = FIELD, losY = F.y + Math.round(F.h * F.losFrac);
+          if (tp.x < F.x || tp.x > F.x + F.w || tp.y < F.y || tp.y > F.y + F.h) continue;
+          c.x = FF.clamp(Math.round((tp.x - F.x) / F.ppy - 15), -14, 14); c.y = FF.clamp(Math.round((losY - tp.y) / F.ppy), -8, 26);
+          if (c.pts.length < MAX_WP) { c.pts.push([c.x - c.ox, c.y - c.oy]); FF.audio.play('tick'); } else FF.audio.play('buzz');
+        }
         if (input.pressed('A')) { if (c.pts.length < MAX_WP) { c.pts.push([c.x - c.ox, c.y - c.oy]); FF.audio.play('tick'); } else FF.audio.play('buzz'); }
         if (input.pressed('B')) { if (c.pts.length) { c.pts.pop(); const l = c.pts[c.pts.length - 1]; if (l) { c.x = c.ox + l[0]; c.y = c.oy + l[1]; } else { c.x = c.ox; c.y = c.oy; } FF.audio.play('back'); } }
         if (input.pressed('START')) {
@@ -9454,6 +9639,11 @@ FF.career = (function () {
         return;
       }
       // main mode
+      for (const tp of (input.taps ? input.taps() : [])) {   // touch: tap a player on the mini field to select him
+        const F = FIELD, losY = F.y + Math.round(F.h * F.losFrac); let best = -1, bd = 9;
+        this.slots.forEach((sl, i) => { const [sx, sy] = this.formation.slots[sl]; const d = Math.hypot(tp.x - (F.x + (sx + 15) * F.ppy), tp.y - (losY - sy * F.ppy)); if (d < bd) { bd = d; best = i; } });
+        if (best >= 0) { this.selSlot = best; FF.audio.play('tick'); }
+      }
       if (input.pressed('SWITCH') || input.pressed('RIGHT')) { this.selSlot = (this.selSlot + 1) % this.slots.length; FF.audio.play('tick'); }
       if (input.pressed('LEFT')) { this.selSlot = (this.selSlot + this.slots.length - 1) % this.slots.length; FF.audio.play('tick'); }
       if (input.pressed('UP') || input.pressed('DOWN')) {
@@ -9504,9 +9694,10 @@ FF.career = (function () {
           FF.rect(x, px + 1, py + 1, 60, 7, '#c8962a'); FF.text(x, f.name, px + 31, py + 2, { font: FONT3x5, color: '#111', align: 'center' });
           UI.drawOffDiagram(x, px, py + 8, 62, 40, f, null, false);
           if (on && Math.floor(t * 4) % 2 === 0) FF.rectO(x, px, py, 62, 48, '#fff');
+          FF.tapZone(px - 1, py - 1, 64, 50, FF.navSeq(this.fi, i, 'h', 8, false).concat(['START']), f.name);
         });
         FF.text(x, 'EACH FORMATION HOLDS 8 PLAYS. A NEW PLAY REPLACES ONE OF THEM.', W / 2, 176, { font: FONT3x5, color: '#ddd', align: 'center' });
-        footer(x, 'ARROWS: PICK   ENTER: OPEN   ESC: BACK');
+        footer(x, touchOn() ? 'TAP A FORMATION   BACK: MENU' : 'ARROWS: PICK   ENTER: OPEN   ESC: BACK');
         return;
       }
       if (this.step === 1) {
@@ -9520,8 +9711,10 @@ FF.career = (function () {
           UI.drawOffDiagram(x, px, py + 8, 62, 42, f, p, false);
           if (custom) FF.text(x, 'CUSTOM', px + 60, py + 44, { font: FONT3x5, color: '#8cf38c', align: 'right' });
           if (on && Math.floor(t * 4) % 2 === 0) FF.rectO(x, px, py, 62, 50, '#fff');
+          FF.tapZone(px - 1, py - 1, 64, 52, FF.navSeq(this.pi, i, 'h', 8, false).concat(['START']), p.name);
         });
-        footer(x, 'ENTER: EDIT THIS SLOT   R: RESTORE DEFAULT   ESC: BACK');
+        if (touchOn()) { tb(x, 'RESTORE SLOT ' + (this.pi + 1), 112, 184, 96, ['R']); if (D.isCustom(this.fi, this.pi)) FF.text(x, 'SLOT ' + (this.pi + 1) + ' IS CUSTOM', W / 2, 198, { font: FONT3x5, color: '#8cf38c', align: 'center' }); }
+        footer(x, touchOn() ? 'TAP A SLOT TO EDIT IT   BACK: FORMATIONS' : 'ENTER: EDIT THIS SLOT   R: RESTORE DEFAULT   ESC: BACK');
         if (this.msgT > 0) FF.text(x, this.msg, W / 2, 176, { color: '#8cf38c', outline: '#000', align: 'center' });
         return;
       }
@@ -9575,7 +9768,7 @@ FF.career = (function () {
       FF.text(x, 'TYPE', px + 6, py + 6, { font: FONT3x5, color: '#aaa' }); FF.text(x, this.type === 'run' ? 'RUN - ' + this.exchange.toUpperCase() + ' TO ' + this.carrier : 'PASS', px + 36, py + 6, { font: FONT3x5, color: '#fff' });
       const KEYLAB = { A: '1', B: '2', C: '3', D: '4' };
       FF.text(x, 'PLAYER', px + 6, py + 16, { font: FONT3x5, color: '#aaa' }); FF.text(x, slot + (this.labels[slot] ? '   KEY ' + KEYLAB[this.labels[slot]] : '   NO READ'), px + 36, py + 16, { font: FONT3x5, color: '#ffe14a' });
-      FF.text(x, 'ROUTE', px + 6, py + 26, { font: FONT3x5, color: '#aaa' }); FF.text(x, r.lib ? r.lib : 'CUSTOM - ' + r.custom.length + ' PTS', px + 36, py + 26, { font: FONT3x5, color: '#fff' }); FF.text(x, 'UP/DOWN', px + 110, py + 26, { font: FONT3x5, color: '#777' });
+      FF.text(x, 'ROUTE', px + 6, py + 26, { font: FONT3x5, color: '#aaa' }); FF.text(x, r.lib ? r.lib : 'CUSTOM - ' + r.custom.length + ' PTS', px + 36, py + 26, { font: FONT3x5, color: '#fff' }); if (!touchOn()) FF.text(x, 'UP/DOWN', px + 110, py + 26, { font: FONT3x5, color: '#777' });
       const reads = ['A', 'B', 'C', 'D'].map(L => { for (const s in this.labels) if (this.labels[s] === L) return KEYLAB[L] + ':' + s; return KEYLAB[L] + ':-'; }).join('  ');
       FF.text(x, 'READS', px + 6, py + 36, { font: FONT3x5, color: '#aaa' }); FF.text(x, reads, px + 36, py + 36, { font: FONT3x5, color: '#8cf38c' });
       FF.rect(x, px + 6, py + 46, 134, 1, '#4a5a90');
@@ -9597,9 +9790,26 @@ FF.career = (function () {
         'ENTER ....... SAVE TO SLOT',
         'ESC ......... BACK - NO SAVE',
       ];
-      help.filter(Boolean).forEach((h, i) => FF.text(x, h, px + 6, py + 52 + i * 9, { font: FONT3x5, color: i === 0 && this.mode !== 'main' ? '#ffe14a' : '#ddd' }));
+      if (!touchOn()) help.filter(Boolean).forEach((h, i) => FF.text(x, h, px + 6, py + 52 + i * 9, { font: FONT3x5, color: i === 0 && this.mode !== 'main' ? '#ffe14a' : '#ddd' }));
+      else if (this.mode === 'draw') {
+        FF.text(x, help[0], px + 6, py + 52, { font: FONT3x5, color: '#ffe14a' });
+        FF.text(x, 'TAP THE FIELD TO DROP A POINT ' + this.cur.pts.length + '/' + MAX_WP, px + 6, py + 62, { font: FONT3x5, color: '#ddd' });
+        tb(x, 'UNDO', px + 6, py + 76, 64, ['B']); tb(x, 'CANCEL', px + 76, py + 76, 64, ['BACK']);
+        tb(x, 'FINISH ROUTE', px + 6, py + 96, 134, ['START'], true);
+      } else if (this.mode === 'name') {
+        FF.text(x, 'TYPE THE PLAY NAME', px + 6, py + 52, { font: FONT3x5, color: '#ffe14a' });
+        FF.text(x, 'KEYBOARD BUTTON BELOW OPENS IT', px + 6, py + 62, { font: FONT3x5, color: '#aaa' }); tb(x, 'DONE', px + 6, py + 74, 134, ['START'], true);
+      } else {
+        FF.text(x, 'TAP A PLAYER ON THE FIELD TO PICK HIM', px + 6, py + 50, { font: FONT3x5, color: '#aaa' });
+        tb(x, '< PLAYER', px + 6, py + 60, 64, ['LEFT']); tb(x, 'PLAYER >', px + 76, py + 60, 64, ['RIGHT']);
+        tb(x, '< ROUTE', px + 6, py + 76, 64, ['UP']); tb(x, 'ROUTE >', px + 76, py + 76, 64, ['DOWN']);
+        tb(x, 'DRAW ROUTE', px + 6, py + 92, 64, ['A']); tb(x, 'THROW KEY', px + 76, py + 92, 64, ['B']);
+        tb(x, this.type === 'run' ? 'CARRIER/PASS' : 'MAKE IT A RUN', px + 6, py + 108, 64, ['FLIP']); tb(x, 'RENAME', px + 76, py + 108, 64, ['TIMEOUT']);
+        if (this.type === 'run') { tb(x, 'RUN PATH', px + 6, py + 124, 64, ['R']); tb(x, this.exchange === 'handoff' ? 'MAKE PITCH' : 'MAKE HANDOFF', px + 76, py + 124, 64, ['NOHUDDLE']); }
+        tb(x, 'SAVE TO SLOT ' + (this.pi + 1), px + 6, py + 140, 134, ['START'], true);
+      }
       if (this.msgT > 0) { FF.rect(x, px + 4, py + 150, 138, 12, '#000'); FF.text(x, this.msg, px + 73, py + 153, { font: FONT3x5, color: '#8cf38c', align: 'center' }); }
-      footer(x, 'WHITE: READ   GRAY: DECOY   CYAN: BALL CARRIER   DASHED: RUSH LINE');
+      footer(x, touchOn() ? 'WHITE: READ   GRAY: DECOY   CYAN: CARRIER   BACK: LEAVE WITHOUT SAVING' : 'WHITE: READ   GRAY: DECOY   CYAN: BALL CARRIER   DASHED: RUSH LINE');
     },
   };
   function header(x, title) { FF.rect(x, 0, 0, W, 26, '#111'); FF.rect(x, 0, 26, W, 2, '#ffe14a'); FF.text(x, title, W / 2, 5, { scale: 2, color: '#ffe14a', outline: '#000', align: 'center', italic: true, bevel: { light: '#fff6b0', dark: '#8a6a00' } }); }
