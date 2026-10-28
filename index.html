@@ -1386,7 +1386,16 @@ const PX = 2; FF.PX = PX;
 FF.canvas = document.getElementById('game');
 FF.canvas.width = W * PX; FF.canvas.height = H * PX;
 const ctx = FF.ctx = FF.canvas.getContext('2d', { alpha: false });
-ctx.imageSmoothingEnabled = false; ctx.setTransform(PX, 0, 0, PX, 0, 0);
+// WIDE SCREEN (phones): the canvas grows sideways to the screen's shape - FF.VW logical px wide - while every
+// layout stays in the 320-wide design space, centered by an x offset FF.OX. The field, the crowd and full-width
+// bars extend into the extra width; menus and the HUD stay put in the middle.
+FF.VW = W; FF.OX = 0;
+FF.applyTransform = function (x) { x = x || ctx; x.setTransform(PX, 0, 0, PX, FF.OX * PX, 0); x.imageSmoothingEnabled = false; };
+ctx.imageSmoothingEnabled = false; FF.applyTransform();
+{ // a fill that spans the whole design width (an overlay, a fade, a HUD bar) spans the whole screen instead
+  const raw = ctx.fillRect.bind(ctx);
+  ctx.fillRect = function (px, py, w, h) { if (FF.OX && px <= 0 && px + w >= W) { const r = px + w; px = -FF.OX; w = (r > W ? r - W : 0) + FF.VW; } raw(px, py, w, h); };
+}
 
 function makeCanvas(w, h) {
   const c = document.createElement('canvas'); c.width = w; c.height = h;
@@ -1402,10 +1411,18 @@ function fitCanvas() {
   let scale = Math.max(1, Math.floor(fit));
   // small screens (phones, small windows) fill the screen with a fractional scale: an integer scale of 1 is a postage stamp
   if ((FF.settings && FF.settings.fractionalScale) || fit < 2.5 || (FF.touch && FF.touch.active)) scale = Math.max(0.5, fit);
-  const cw = Math.floor(W * scale), ch = Math.floor(H * scale);
+  // phones: widen the picture to the screen's aspect (up to ~2.2:1) so there are no black bars at the sides
+  const wide = FF.touch && FF.touch.active && FF.settings && FF.settings.wideScreen !== false;
+  const VW = wide ? FF.clamp(Math.round(H * ww / wh), W, 500) : W;
+  if (VW !== FF.VW) { FF.VW = VW; FF.OX = (VW - W) / 2; c.width = VW * PX; c.height = H * PX; if (FF.field && FF.field.MAIN_VP) { FF.field.MAIN_VP.x = -FF.OX; FF.field.MAIN_VP.w = VW; } FF.applyTransform(); }
+  if (wide) scale = Math.min(ww / VW, wh / H);
+  const cw = Math.floor(VW * scale), ch = Math.floor(H * scale);
   c.style.width = cw + 'px'; c.style.height = ch + 'px';
   FF.displayScale = scale;
-  FF.canvasRect = { x: Math.floor((ww - cw) / 2), y: Math.floor((wh - ch) / 2), w: cw, h: ch };
+  // canvasRect is the 320-wide design area on screen (inputs and hit tests map through it)
+  const left = Math.floor((ww - cw) / 2);
+  FF.canvasRect = { x: left + Math.round(FF.OX * scale), y: Math.floor((wh - ch) / 2), w: Math.round(W * scale), h: ch };
+  FF.screenRect = { x: left, y: Math.floor((wh - ch) / 2), w: cw, h: ch };
   if (FF.touch) FF.touch.relayout();
 }
 // prompts name keys; on a touch screen they name the on-screen buttons instead
@@ -1782,13 +1799,15 @@ Object.assign(FF, { hexToRgb, rgbToHex, shade, tint, luma, rgbToHsl, hslToRgb, s
 
 /* ------------------------------------------------------------ settings */
 FF.defaultSettings = () => ({
-  halfMinutes: 6, downsToCross: 4, downsToScore: 4, twoMinuteStops: true, timeouts: 1,
+  halfMinutes: 4, downsToCross: 4, downsToScore: 4, twoMinuteStops: true, timeouts: 1,
   difficulty: 1, penalties: true, intSpot: 'spot', qbRun: 'always', fractionalScale: false, scanlines: false,
-  sfx: true, music: true, autoPull: false, runoff: 15, playStyle: 'classic', gameSpeed: 'normal', aimSens: 'medium', passView: 'windows',
+  sfx: true, music: true, autoPull: false, runoff: 10, playStyle: 'classic', gameSpeed: 'normal', aimSens: 'medium', passView: 'windows', readAids: true, cfgVer: 23,
 });
 FF.load = function (key, fallback) { try { const v = localStorage.getItem('ff94_' + key); return v ? JSON.parse(v) : fallback; } catch (e) { return fallback; } };
 FF.save = function (key, val) { try { localStorage.setItem('ff94_' + key, JSON.stringify(val)); return true; } catch (e) { return false; } };
 FF.settings = Object.assign(FF.defaultSettings(), FF.load('settings', {}));
+// v0.23 moved the defaults to 4-minute halves and 10 s of run-off: older saves still holding the old defaults move too
+if ((FF.settings.cfgVer || 0) < 23) { if (FF.settings.halfMinutes === 6) FF.settings.halfMinutes = 4; if (FF.settings.runoff === 15) FF.settings.runoff = 10; FF.settings.cfgVer = 23; }
 // GAME SPEED: the live action runs at this fraction of real time (FAST is the original v0.18 pace)
 FF.gameSpeed = () => ({ slow: 0.72, normal: 0.85, fast: 1 })[FF.settings.gameSpeed] || 0.85;
 FF.saveSettings = () => FF.save('settings', FF.settings);
@@ -3464,19 +3483,20 @@ FF.field = (function () {
     x.save(); x.beginPath(); x.rect(vp.x, vp.y, vp.w, vp.h); x.clip();
     for (const r of sim.windowTargets) {
       const p = r.p, pr = proj(p.x, p.y, cam, vp), ss = spriteScale(pr.s);
-      const rd = READ[r.rel] || READ.open, col = rd[1];
+      const aids = FF.settings.readAids !== false;   // READ AIDS off: a plain white ring and no read tag (purist mode)
+      const rd = READ[r.rel] || READ.open, col = aids ? rd[1] : '#ffffff';
       const held = sim.holdL && sim.labels[sim.holdL] === p;
       // ring under the feet
       x.strokeStyle = '#000'; x.lineWidth = 3; x.beginPath(); x.ellipse(pr.x, pr.y, 9 * ss, 4 * ss, 0, 0, Math.PI * 2); x.stroke();
       x.strokeStyle = col; x.lineWidth = held ? 2.5 : 1.5; x.beginPath(); x.ellipse(pr.x, pr.y, 9 * ss, 4 * ss, 0, 0, Math.PI * 2); x.stroke();
       // badge over the head: number cap (keyboard) + read tag
       const top = Math.round(pr.y - 30 * ss) - 9;
-      const tag = rd[0], tw = FF.textWidth(tag, { font: FONT3x5 }) + 4;
+      if (!aids && touch) continue;   // nothing over the head: the ring is the target
+      const tag = aids ? rd[0] : '', tw = aids ? FF.textWidth(tag, { font: FONT3x5 }) + 4 : -2;
       const cw = touch ? 0 : 9, bw = cw + tw + 2, bx = Math.round(pr.x - bw / 2);
       FF.rect(x, bx - 1, top - 1, bw + 2, 10, '#000');
       if (!touch) { FF.rect(x, bx, top, 8, 8, held ? '#ffe14a' : '#f0f0f0'); FF.text(x, r.label, bx + 4, top + 2, { font: FONT3x5, color: '#c8401c', align: 'center' }); }
-      FF.rect(x, bx + cw, top, tw + 2, 8, 'rgba(0,0,0,0.85)');
-      FF.text(x, tag, bx + cw + 2, top + 2, { font: FONT3x5, color: col });
+      if (aids) { FF.rect(x, bx + cw, top, tw + 2, 8, 'rgba(0,0,0,0.85)'); FF.text(x, tag, bx + cw + 2, top + 2, { font: FONT3x5, color: col }); }
       x.fillStyle = '#000'; x.beginPath(); x.moveTo(pr.x - 3, top + 9); x.lineTo(pr.x + 3, top + 9); x.lineTo(pr.x, top + 12); x.fill();
     }
     x.restore();
@@ -3528,10 +3548,12 @@ FF.field = (function () {
       FF.text(x, (depth >= 0 ? '+' : '') + depth, wx + 4, wy + 4, { font: FONT3x5, color: '#fff', outline: '#000' });
       // the read: OPEN, or where the defender sits and which throw beats him (LOB over a man underneath,
       // BULLET past a man trailing) - COVERED when he is right on the receiver
+      if (FF.settings.readAids !== false) {
       const tag = r.rel === 'open' ? ['OPEN', '#58e868'] : r.rel === 'under' ? ['LOB IT', '#ffe14a'] : r.rel === 'over' ? ['BULLET', '#ffa040'] : ['COVERED', '#ff5050'];
       const tw = FF.textWidth(tag[0], { font: FONT3x5 }) + 6;
       FF.rect(x, wx + 3, wy + WIN.h - 12, tw, 8, 'rgba(0,0,0,0.7)');
       FF.text(x, tag[0], wx + 6, wy + WIN.h - 11, { font: FONT3x5, color: tag[1] });
+      }
     }
     // D tab at the right edge for the fourth receiver
     const d = recs[3];
@@ -3973,7 +3995,11 @@ FF.Sim = (function () {
       const out = [];
       for (const w of route) {
         if (w.wait != null) { out.push({ wait: w.wait }); continue; }
-        out.push({ x: p.tx + w[0] * side, y: p.ty + w[1] });
+        // routes stay on the field: a break that would carry him out of bounds stops 1.2 yd inside the sideline
+        // (or short of the end line); he settles there for a beat, then works to get open
+        const rx = p.tx + w[0] * side, ry = p.ty + w[1];
+        const cx = FF.clamp(rx, 1.2, F.FW - 1.2), cy = Math.min(ry, F.FL - 1.5);
+        out.push({ x: cx, y: cy, sideline: Math.abs(cx - rx) > 0.3 || cy < ry - 0.3 });
       }
       return out;
     }
@@ -4549,9 +4575,15 @@ FF.Sim = (function () {
       if (p.state === 'route') { if (this.followPath(p, p.route, 0.92, dt)) { this.setState(p, 'improv'); p.improvT = 0; } return; }
       if (p.state === 'improv' || p.state === 'pursue' || p.state === 'idle') {
         p.improvT += dt;
+        // stopped at the sideline: plant, turn back to the quarterback for half a second
+        if (p.sidelineHold > 0) { p.sidelineHold -= dt; p.wantDir = [0, 0]; p.wantSpeed = 0; p.facing = F.dirFrom(this.qb.x - p.x, this.qb.y - p.y); p.vx *= 0.8; p.vy *= 0.8; p.improvT = 0.4; return; }
         const n = this.nearest(this.def, p.x, p.y);
         let dx = 0, dy = 0;
-        if (p.improvT < 0.4) { dx = p.vx; dy = p.vy; }
+        const nearLine = p.x < 3 || p.x > F.FW - 3;
+        if (p.improvT < 0.4 && !nearLine) { dx = p.vx; dy = p.vy; }
+        else if (nearLine && (!n.p || n.d > 1.5)) {   // freelance off the sideline: back inside, toward a spot the QB can hit
+          dx = (BALLX - p.x) * 0.25; dy = (n.p && n.p.y > p.y ? -0.6 : 0.4);
+        }
         else if (n.p && n.d < 3) { dx = (p.x - n.p.x); dy = (p.y - n.p.y) + 1.2; }
         else { dx = (BALLX - p.x) * 0.1; dy = p.y < this.los + 18 ? 1 : -0.3; }
         // stay in bounds and out of the end line
@@ -4574,7 +4606,10 @@ FF.Sim = (function () {
       // route running rating controls how early the cut starts (sharper = tighter)
       const near = 0.45 + (1 - p.info.ratings.rte / 99) * 0.5;
       const dx = w.x - p.x, dy = w.y - p.y, l = Math.hypot(dx, dy);
-      if (l < near) { p.routeIdx++; return p.routeIdx >= path.length && !(path[p.routeIdx] && path[p.routeIdx].wait != null); }
+      if (l < near || (w.sideline && l < 1.2)) {
+        if (w.sideline) { p.routeIdx = path.length; p.sidelineHold = 0.5; return true; }   // at the boundary: the route is over
+        p.routeIdx++; return p.routeIdx >= path.length && !(path[p.routeIdx] && path[p.routeIdx].wait != null);
+      }
       p.wantDir = [dx / l, dy / l]; p.wantSpeed = speed;
       return false;
     }
@@ -4763,13 +4798,13 @@ FF.Sim = (function () {
     throwTo(r, kind, lead) {
       const qb = this.qb;
       const arm = qb.info.ratings.arm, acc = qb.info.ratings.acc;
-      // flight time estimate -> project the receiver
+      // lead him: find where he will be when the ball gets there. The flight time depends on the distance, so
+      // iterate: guess a spot, time the throw to it, walk the receiver along the rest of his route for that time.
       let lx = r.x, ly = r.y;
-      for (let i = 0; i < 2; i++) {
+      for (let i = 0; i < 6; i++) {
         const dd = FF.dist(qb.x, qb.y, lx, ly);
         const T = kind === 'bullet' ? dd / 26 + 0.1 : dd / 16 + 0.2;
-        const damp = r.state === 'route' ? 0.85 : 0.6;
-        lx = r.x + r.vx * T * damp; ly = r.y + r.vy * T * damp;
+        const q = this.predictReceiver(r, qb.isHuman ? T : T * (0.84 + 0.14 * this.diff.cpuRead)); lx = q[0]; ly = q[1];   // a CPU passer's lead is a touch short (less so on All-Pro)
       }
       if (lead) { lx += (lead.x || 0) * 2.5; ly += (lead.y || 0) * 2.5; }
       // scatter grows with distance, moving QB, pressure, low accuracy
@@ -4784,6 +4819,31 @@ FF.Sim = (function () {
       const maxD = 24 + arm * 0.26;
       if (dd > maxD) { const f = maxD / dd; lx = qb.x + (lx - qb.x) * f; ly = qb.y + (ly - qb.y) * f; }
       this.launch(qb, r, lx, ly, kind);
+    }
+    // where receiver r will be in T seconds if he keeps running his route (waypoints, cut radius, speed and
+    // acceleration as followPath / integrate move him); off his route he keeps his current velocity, eased
+    predictReceiver(r, T) {
+      const dt = 1 / 30; let x = r.x, y = r.y, vx = r.vx, vy = r.vy, idx = r.routeIdx || 0, wait = r.routeWait || 0;
+      const path = r.state === 'route' && r.route ? r.route : null;
+      const near = 0.45 + (1 - r.info.ratings.rte / 99) * 0.5;
+      for (let t = 0; t < T; t += dt) {
+        let wx = null, wy = null, spd = 0;
+        if (path) {
+          while (idx < path.length && path[idx].wait != null) { if (wait <= 0) wait = path[idx].wait; wait -= dt; if (wait > 0) break; wait = 0; idx++; }
+          if (idx < path.length && wait <= 0) {
+            const w = path[idx]; wx = w.x; wy = w.y;
+            if (Math.hypot(wx - x, wy - y) < (w.sideline ? 1.2 : near)) { if (w.sideline) idx = path.length; else idx++; if (idx >= path.length) { wx = null; } else { wx = path[idx].x; wy = path[idx].y; if (wx == null) wx = null; } }
+            if (wx != null) spd = 0.92 * r.maxSpeed * ((wy - y > 8 && r.stamina > 0.2) ? 1.22 : 1);
+          }
+        }
+        let tx, ty;
+        if (wx != null) { const dx = wx - x, dy = wy - y, l = Math.hypot(dx, dy) || 1; tx = dx / l * spd; ty = dy / l * spd; }
+        else if (path) { tx = 0; ty = 0; }                 // route over: he settles
+        else { tx = vx; ty = vy; }
+        const k = Math.min(1, dt * r.turn * (1 - 0.35 * Math.min(1, Math.hypot(vx, vy) / (r.maxSpeed * 1.22))));
+        vx += (tx - vx) * k; vy += (ty - vy) * k; x += vx * dt; y += vy * dt;
+      }
+      return [x, y];
     }
     launch(qb, r, lx, ly, kind) {
       const b = this.ball;
@@ -5457,7 +5517,7 @@ FF.Game = (function () {
     beginPlaycall() {
       this.setState('playcall'); this.playClock = this.practice ? 999 : 30; this.delayWarned = false;
       if (this.mode !== 'demo' && FF.audio) FF.audio.music('huddle');   // a quiet loop while the play is picked
-      const hs = this.practice ? 'both' : this.humanSide();
+      const hs = this.practice ? (this.mode === 'training' ? 'off' : 'both') : this.humanSide();   // training camp: the CPU calls the defense
       this.callUI = FF.ui.makePlaycall(this, hs);
       // CPU choices are made immediately (hidden)
       this.cpuOff = (hs === 'off' || hs === 'both') ? null : this.pickOffense();
@@ -5566,7 +5626,7 @@ FF.Game = (function () {
     updatePlay(dt, input) {
       const s = this.sim;
       // a one-time controls card on the first snap of a human game (any key clears it)
-      if (s.phase === 'presnap' && this.humanTeam != null && this.mode !== 'demo' && !this.introDone) {
+      if (s.phase === 'presnap' && this.humanTeam != null && this.mode !== 'demo' && !this.introDone && FF.settings.hints !== false) {   // CONTROL HINTS off: no controls card either
         if (!this.intro) this.intro = { t: 0 };
         this.intro.t += dt;
         if (this.intro.t > 0.6 && input.any()) { this.introDone = true; this.intro = null; return; }   // the dismissing key does nothing else
@@ -5980,18 +6040,19 @@ FF.ui = (function () {
 
   let backdrop = null;
   function bg(x) {
+    if (backdrop && backdrop.vw !== FF.VW) backdrop = null;   // the screen got wider / narrower
     if (!backdrop) {
       try {
-        backdrop = FF.makeCanvas(W, H); const g = backdrop.getContext('2d');
+        backdrop = FF.makeCanvas(FF.VW, H); backdrop.vw = FF.VW; const g = backdrop.getContext('2d'); g.translate(FF.OX, 0);
         const prev = FF.stadium.mood.name; FF.stadium.setMood('dusk');
         const cam = F.makeCamera(); cam.base = F.baseFor(F.MID, 0.3); cam.cx = 15;
         F.drawField(g, cam, F.MAIN_VP, [D.TEAMS[0], D.TEAMS[1]], 0, { los: F.MID, gain: F.GOAL1 }, 0);
         FF.stadium.setMood(prev);
-        g.fillStyle = 'rgba(6,10,24,0.66)'; g.fillRect(0, 0, W, H);
-        const gr = g.createLinearGradient(0, 0, 0, H); gr.addColorStop(0, 'rgba(0,0,0,0.35)'); gr.addColorStop(0.5, 'rgba(0,0,0,0)'); gr.addColorStop(1, 'rgba(0,0,0,0.45)'); g.fillStyle = gr; g.fillRect(0, 0, W, H);
-      } catch (e) { backdrop = null; FF.ditherFill(x, 0, 0, W, H, GRAY, GRAY2); return; }
+        g.fillStyle = 'rgba(6,10,24,0.66)'; g.fillRect(-FF.OX, 0, FF.VW, H);
+        const gr = g.createLinearGradient(0, 0, 0, H); gr.addColorStop(0, 'rgba(0,0,0,0.35)'); gr.addColorStop(0.5, 'rgba(0,0,0,0)'); gr.addColorStop(1, 'rgba(0,0,0,0.45)'); g.fillStyle = gr; g.fillRect(-FF.OX, 0, FF.VW, H);
+      } catch (e) { backdrop = null; FF.ditherFill(x, -FF.OX, 0, FF.VW, H, GRAY, GRAY2); return; }
     }
-    x.drawImage(backdrop, 0, 0);
+    x.drawImage(backdrop, -FF.OX, 0);
   }
   function teamNameText(x, team, px, py, scale) {
     const c = team.colors.primary; const col = FF.luma(c) < 70 ? FF.tint(c, 0.5) : c;
@@ -6235,7 +6296,7 @@ FF.ui = (function () {
     teamNameText(x, off, 6, 128, 2);
     const fb = FF.sprites.footballIcon(); const nw = FF.textWidth(off.name, { scale: 2, spacing: 1 }) + 6;
     x.drawImage(fb, Math.min(6 + nw + 4, 130), 131);
-    button(x, 'RESET', 150, 129, 48, false); button(x, 'NO HUDDLE', 202, 129, 58, false); button(x, 'FLIP', 264, 129, 48, ui.flip && humanOff);
+    button(x, humanOff && ui.level === 1 ? '< BACK' : 'RESET', 150, 129, 48, humanOff && ui.level === 1); button(x, 'NO HUDDLE', 202, 129, 58, false); button(x, 'FLIP', 264, 129, 48, ui.flip && humanOff);
     capBox(x, off, 6, 146);
     timeoutsBox(x, game, offIdx, 6, 190);
     drawGrid(x, game, ui, 'off', 146, humanOff, t);
@@ -6243,8 +6304,8 @@ FF.ui = (function () {
     if (ui.humanSide) {
       const touch = FF.touch && FF.touch.active;
       const hint = touch
-        ? (ui.humanSide === 'both' ? (ui.activeSide === 'def' ? 'PRACTICE: TAP A DEFENSE FIRST   MENU: QUIT' : 'PRACTICE: NOW TAP YOUR PLAY   MENU: QUIT') : ui.level === 0 ? 'TAP A FORMATION   FLIP / NO HUDDLE / RESET: TAP THE BUTTONS ABOVE   T.O.: TIMEOUT' : 'TAP A PLAY   RESET: BACK   FLIP: TAP THE BUTTON ABOVE')
-        : ui.humanSide === 'both' ? (ui.activeSide === 'def' ? 'PRACTICE: PICK THE DEFENSE FIRST - ARROWS, THEN ENTER   ESC: QUIT' : 'PRACTICE: NOW PICK YOUR PLAY - ARROWS, THEN ENTER   F: FLIP   ESC: QUIT') : ui.level === 0 ? 'ARROWS: MOVE   ENTER: PICK   1-3: PICK IN WINDOW   F: FLIP   N: NO HUDDLE   T: TIMEOUT   ESC: MENU' : 'ARROWS: MOVE   ENTER: PICK   1-3: PICK IN WINDOW   ESC: BACK   F: FLIP';
+        ? (ui.humanSide === 'both' ? (ui.activeSide === 'def' ? 'PRACTICE: TAP A DEFENSE FIRST   MENU: QUIT' : 'PRACTICE: NOW TAP YOUR PLAY   MENU: QUIT') : ui.level === 0 ? 'TAP A FORMATION   FLIP / NO HUDDLE / RESET: TAP THE BUTTONS ABOVE   T.O.: TIMEOUT' : 'TAP A PLAY   < BACK (ABOVE): PICK ANOTHER FORMATION   FLIP: THE BUTTON ABOVE')
+        : ui.humanSide === 'both' ? (ui.activeSide === 'def' ? 'PRACTICE: PICK THE DEFENSE FIRST - ARROWS, THEN ENTER   ESC: QUIT' : 'PRACTICE: NOW PICK YOUR PLAY - ARROWS, THEN ENTER   F: FLIP   ESC: QUIT') : ui.level === 0 ? 'ARROWS: MOVE   ENTER: PICK   1-3: PICK IN WINDOW   F: FLIP   N: NO HUDDLE   T: TIMEOUT   ESC: MENU' : 'ARROWS: MOVE   ENTER: PICK   1-3: PICK IN WINDOW   ESC: BACK TO FORMATIONS   F: FLIP';
       FF.rect(x, 0, H - 7, W, 7, 'rgba(0,0,0,0.75)');
       if (humanDef) {   // the play-art key shares the line while a defense is being picked
         let kx = 3;
@@ -6951,14 +7012,25 @@ FF.touch = (function () {
     if (root) return;
     const css = document.createElement('style');
     css.textContent = `
-      #touch { position: fixed; inset: 0; pointer-events: none; z-index: 5; font: bold 14px/1 "Courier New", monospace; user-select: none; -webkit-user-select: none; }
-      #touch .tb { position: absolute; display: none; align-items: center; justify-content: center; border-radius: 50%; color: #fff; letter-spacing: 1px;
-        background: rgba(20,24,40,0.42); border: 2px solid rgba(255,255,255,0.55); box-shadow: 0 0 0 2px rgba(0,0,0,0.45); text-shadow: 0 1px 0 #000; transition: background 0.05s; }
-      #touch .tb.on { background: rgba(255,225,74,0.75); color: #111; text-shadow: none; }
-      #touch .tb.pill { border-radius: 12px; font-size: 12px; }
+      #touch { position: fixed; inset: 0; pointer-events: none; z-index: 5; font: 600 14px/1 -apple-system, "SF Pro Rounded", "SF Pro Text", system-ui, "Segoe UI", sans-serif; user-select: none; -webkit-user-select: none; }
+      /* iOS-style "liquid glass": a frosted, translucent disc that blurs the game behind it, a bright rim and
+         a soft inner highlight; pressing lifts it with a warm glow */
+      #touch .tb { position: absolute; display: none; align-items: center; justify-content: center; border-radius: 50%; color: rgba(255,255,255,0.96); letter-spacing: 0.5px;
+        background: linear-gradient(160deg, rgba(255,255,255,0.30) 0%, rgba(255,255,255,0.10) 45%, rgba(255,255,255,0.05) 100%);
+        -webkit-backdrop-filter: blur(14px) saturate(170%); backdrop-filter: blur(14px) saturate(170%);
+        border: 1px solid rgba(255,255,255,0.45);
+        box-shadow: inset 0 1px 1px rgba(255,255,255,0.55), inset 0 -8px 16px rgba(0,0,0,0.12), 0 6px 18px rgba(0,0,0,0.35);
+        text-shadow: 0 1px 2px rgba(0,0,0,0.55); transition: transform 0.08s ease, background 0.08s ease, box-shadow 0.08s ease; }
+      #touch .tb.on { transform: scale(0.94); background: linear-gradient(160deg, rgba(255,236,140,0.70), rgba(255,200,60,0.45)); color: #1a1400; text-shadow: none;
+        box-shadow: inset 0 1px 1px rgba(255,255,255,0.7), 0 0 22px rgba(255,214,80,0.55), 0 4px 12px rgba(0,0,0,0.3); }
+      #touch .tb.pill { border-radius: 999px; font-size: 12px; }
       #touch .tb.big { font-size: 16px; }
-      #touch #stk { position: absolute; width: 110px; height: 110px; margin: -55px 0 0 -55px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.4); background: rgba(20,24,40,0.3); display: none; }
-      #touch #knb { position: absolute; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%; background: rgba(255,255,255,0.65); box-shadow: 0 0 0 2px rgba(0,0,0,0.4); display: none; }
+      #touch #stk { position: absolute; width: 116px; height: 116px; margin: -58px 0 0 -58px; border-radius: 50%; display: none;
+        border: 1px solid rgba(255,255,255,0.40); background: radial-gradient(circle at 50% 40%, rgba(255,255,255,0.16), rgba(255,255,255,0.05) 70%);
+        -webkit-backdrop-filter: blur(10px) saturate(150%); backdrop-filter: blur(10px) saturate(150%); box-shadow: inset 0 1px 1px rgba(255,255,255,0.4), 0 6px 18px rgba(0,0,0,0.3); }
+      #touch #knb { position: absolute; width: 50px; height: 50px; margin: -25px 0 0 -25px; border-radius: 50%; display: none;
+        background: linear-gradient(160deg, rgba(255,255,255,0.85), rgba(255,255,255,0.45)); border: 1px solid rgba(255,255,255,0.8);
+        -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); box-shadow: 0 4px 12px rgba(0,0,0,0.35), inset 0 1px 1px #fff; }
       #touch #rot { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: #14141c; color: #ffe14a; font-size: 18px; text-align: center; pointer-events: auto; }
     `;
     document.head.appendChild(css);
@@ -6976,10 +7048,17 @@ FF.touch = (function () {
   }
   // button rectangles in window px (recomputed on resize / context change)
   const rects = {};
-  function place(k, x, y, w, h) { const e = btnEls[k]; e.style.left = x + 'px'; e.style.top = y + 'px'; e.style.width = w + 'px'; e.style.height = h + 'px'; e.style.display = 'flex'; rects[k] = { x, y, w, h }; }
+  // iPhone notch / home-indicator insets (viewport-fit=cover): buttons keep clear of them
+  let saProbe = null, SA = { l: 0, r: 0, t: 0, b: 0 };
+  function safeArea() {
+    if (!saProbe) { saProbe = document.createElement('div'); Object.assign(saProbe.style, { position: 'fixed', left: 0, top: 0, width: 0, height: 0, visibility: 'hidden', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)', paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }); document.body.appendChild(saProbe); }
+    const cs = getComputedStyle(saProbe); SA = { l: parseFloat(cs.paddingLeft) || 0, r: parseFloat(cs.paddingRight) || 0, t: parseFloat(cs.paddingTop) || 0, b: parseFloat(cs.paddingBottom) || 0 };
+    return SA;
+  }
+  function place(k, x, y, w, h) { x += SA.l; y += SA.t; const e = btnEls[k]; e.style.left = x + 'px'; e.style.top = y + 'px'; e.style.width = w + 'px'; e.style.height = h + 'px'; e.style.display = 'flex'; rects[k] = { x, y, w, h }; }
   function relayout() {
     if (!root) return;
-    const ww = window.innerWidth, wh = window.innerHeight;
+    safeArea(); const ww = window.innerWidth - SA.l - SA.r, wh = window.innerHeight - SA.t - SA.b;
     const ctx = T.ctx || context();
     for (const k in btnEls) { btnEls[k].style.display = 'none'; delete rects[k]; }
     const u = Math.max(40, Math.min(64, Math.round(Math.min(ww, wh) * 0.16)));   // button unit
@@ -7411,7 +7490,7 @@ FF.career = (function () {
       RB: [['# YARDS FROM SCRIMMAGE', 'scrim', sc(400, 40), 400], ['SCORE # TOUCHDOWNS', 'tds', sc(8, 1), 400], ['# BROKEN PULLS', 'broken', sc(60, 6), 300]],
       C: [['# RECEPTIONS', 'recs', sc(60, 6), 300], ['# SACKS', 'sacks', sc(10, 1), 400], ['# FLAG PULLS', 'pulls', sc(35, 4), 300]],
     };
-    const byDpos = { R: ['# SACKS', 'sacks', sc(8, 1), 400], CB: ['# INTERCEPTIONS', 'ints', sc(4, 1), 400], S: ['3 PICKS AND 20 PULLS', 'picksPulls', 1, 400], LB: ['# FLAG PULLS', 'pulls', sc(40, 5), 400] };
+    const byDpos = { R: ['# SACKS', 'sacks', sc(8, 1), 400], CB: ['# INTERCEPTIONS', 'ints', sc(4, 1), 400], S: [sc(3, 1) + ' PICKS AND ' + sc(20, 4) + ' PULLS', 'picksPulls:' + sc(3, 1) + ':' + sc(20, 4), 1, 400], LB: ['# FLAG PULLS', 'pulls', sc(40, 5), 400] };
     const g = (byPos[star.pos] || byPos.WR).slice(0, 2).concat([byDpos[star.dpos] || byDpos.S]);
     return g.map(([name, key, target, xp]) => ({ name: name.replace('#', String(target)), key, target, xp, f }));
   }
@@ -7419,11 +7498,11 @@ FF.career = (function () {
     s = s || {};
     if (key === 'scrim') return (s.recYds || 0) + (s.rushYds || 0);
     if (key === 'tds') return (s.recTD || 0) + (s.rushTD || 0);
-    if (key === 'picksPulls') return ((s.ints || 0) >= 3 && (s.pulls || 0) >= 20) ? 1 : 0;
+    if (key.startsWith('picksPulls')) { const [, a, b] = key.split(':'); return ((s.ints || 0) >= (+a || 3) && (s.pulls || 0) >= (+b || 20)) ? 1 : 0; }   // targets ride in the key (scaled to the half length)
     return s[key] || 0;
   }
   function goalProgressText(goal, s) {
-    if (goal.key === 'picksPulls') return (s.ints || 0) + ' INT / ' + (s.pulls || 0) + ' PULLS';
+    if (goal.key.startsWith('picksPulls')) return (s.ints || 0) + ' INT / ' + (s.pulls || 0) + ' PULLS';
     return Math.min(goalValue(goal.key, s), goal.target) + ' / ' + goal.target;
   }
 
@@ -7937,8 +8016,9 @@ FF.career = (function () {
       return [
         ['PLAY STYLE', { classic: "CLASSIC '94", retro: 'RETRO SIDELINE', overhead: 'RETRO OVERHEAD' }[s.playStyle] || "CLASSIC '94", v => { const o = ['classic', 'retro', 'overhead']; s.playStyle = o[(o.indexOf(s.playStyle) + v + 3) % 3]; }],
         ['GAME SPEED', { slow: 'SLOW', normal: 'NORMAL', fast: 'FAST' }[s.gameSpeed] || 'NORMAL', v => { const o = ['slow', 'normal', 'fast']; s.gameSpeed = o[FF.clamp(o.indexOf(s.gameSpeed || 'normal') + v, 0, 2)]; }],
-        ['PASSING (CLASSIC)', s.passView === 'field' ? 'TAP RECEIVER' : "'94 WINDOWS", () => { s.passView = s.passView === 'field' ? 'windows' : 'field'; }],
-        ['THROW AIM (RETRO)', { low: 'LOW SENSITIVITY', medium: 'MEDIUM', high: 'HIGH SENSITIVITY' }[s.aimSens] || 'MEDIUM', v => { const o = ['low', 'medium', 'high']; s.aimSens = o[FF.clamp(o.indexOf(s.aimSens || 'medium') + v, 0, 2)]; }],
+        ['PASSING', s.passView === 'field' ? 'TAP RECEIVER' : "'94 WINDOWS", () => { s.passView = s.passView === 'field' ? 'windows' : 'field'; }, 'classic'],
+        ['READ AIDS (RINGS, TAGS)', s.readAids === false ? 'OFF' : 'ON', () => { s.readAids = s.readAids === false; }, 'classic'],
+        ['THROW AIM', { low: 'LOW SENSITIVITY', medium: 'MEDIUM', high: 'HIGH SENSITIVITY' }[s.aimSens] || 'MEDIUM', v => { const o = ['low', 'medium', 'high']; s.aimSens = o[FF.clamp(o.indexOf(s.aimSens || 'medium') + v, 0, 2)]; }, 'retro'],
         ['HALF LENGTH', s.halfMinutes + ' MIN', v => { const o = [2, 4, 6, 10]; s.halfMinutes = o[FF.clamp(o.indexOf(s.halfMinutes) + v, 0, 3)]; }],
         ['DIFFICULTY', ['ROOKIE', 'PRO', 'ALL-PRO'][s.difficulty], v => { s.difficulty = FF.clamp(s.difficulty + v, 0, 2); }],
         ['DOWNS TO CROSS MIDFIELD', String(s.downsToCross), v => { s.downsToCross = FF.clamp(s.downsToCross + v, 3, 4); }],
@@ -7949,7 +8029,7 @@ FF.career = (function () {
         ['PENALTIES', s.penalties ? 'ON' : 'OFF (ARCADE)', () => { s.penalties = !s.penalties; }],
         ['INTERCEPTION SPOT', s.intSpot === 'spot' ? 'SPOT OF PULL' : 'OWN 5', () => { s.intSpot = s.intSpot === 'spot' ? 'own5' : 'spot'; }],
         ['QB CAN RUN', { never: 'NEVER', rusher: 'ONCE RUSHER CROSSES', always: 'ALWAYS' }[s.qbRun || 'always'], v => { const o = ['never', 'rusher', 'always']; s.qbRun = o[FF.clamp(o.indexOf(s.qbRun || 'always') + v, 0, 2)]; }],
-        ['AUTO FLAG PULL', s.autoPull ? 'ON' : 'OFF', () => { s.autoPull = !s.autoPull; }],
+        ['AUTO FLAG PULL', s.autoPull ? 'ON' : 'OFF', () => { s.autoPull = !s.autoPull; }, 'classic'],
         ['TIME OF DAY', { auto: 'VARIES', day: 'DAY', dusk: 'DUSK', night: 'NIGHT' }[s.timeOfDay || 'auto'], v => { const o = ['auto', 'day', 'dusk', 'night']; s.timeOfDay = o[(o.indexOf(s.timeOfDay || 'auto') + v + 4) % 4]; }],
         ['WEATHER', { auto: 'VARIES', clear: 'CLEAR', rain: 'RAIN', snow: 'SNOW' }[s.weather || 'auto'], v => { const o = ['auto', 'clear', 'rain', 'snow']; s.weather = o[(o.indexOf(s.weather || 'auto') + v + 4) % 4]; }],
         ['CONTROL HINTS', s.hints === false ? 'OFF' : 'ON', () => { s.hints = s.hints === false; }],
@@ -7957,10 +8037,10 @@ FF.career = (function () {
         ['SCALING', s.fractionalScale ? 'FILL WINDOW' : 'PIXEL PERFECT', () => { s.fractionalScale = !s.fractionalScale; window.dispatchEvent(new Event('resize')); }],
         ['MUSIC', s.music ? 'ON' : 'OFF', () => { s.music = !s.music; FF.audio.applySettings(); }],
         ['SOUND EFFECTS', s.sfx ? 'ON' : 'OFF', () => { s.sfx = !s.sfx; }],
-      ];
+      ].filter(r => !r[3] || (r[3] === 'classic' ? s.playStyle === 'classic' : s.playStyle !== 'classic'));   // only the options the chosen play style uses
     },
     update(dt, input) {
-      const rows = this.rows();
+      const rows = this.rows(); this.sel = Math.min(this.sel, rows.length - 1);
       this.sel = navUpDown(input, this.sel, rows.length);
       const lr = (input.pressed('LEFT') ? -1 : 0) + (input.pressed('RIGHT') ? 1 : 0);
       if (lr || confirm(input)) { rows[this.sel][2](lr || 1); FF.saveSettings(); FF.audio.play('tick'); }
@@ -8229,7 +8309,8 @@ FF.career = (function () {
       }
       if (this.args.mode === 'practice' && g.state === 'playcall' && !g.callUI.humanSide) { }
       g.update(dt, input);
-      if (this.args.mode === 'training' && g.playsRun >= 6 && g.state === 'playcall') { this.finished(g); return; }
+      // training camp: six plays, or fewer once the weekly XP cap is reached (more plays would pay nothing)
+      if (this.args.mode === 'training' && g.state === 'playcall' && (g.playsRun >= 6 || (FF.trainCap && g.starXP >= FF.trainCap(g.difficulty)))) { this.finished(g); return; }
       for (const s of g.sfx) FF.audio.play(s); g.sfx.length = 0;
       if (g.state === 'halftime' && this.lastState !== 'halftime') FF.audio.music('half');
       if (g.state === 'final' && this.lastState !== 'final') FF.audio.music('half');
@@ -8336,6 +8417,7 @@ FF.career = (function () {
     return c;
   }
   const CAPTAIN_LEVEL = 5, TRAIN_CAP = 40, TRAIN_PLAYS = 6;
+  FF.trainCap = diff => Math.round(TRAIN_CAP * C.DIFF_MULT[FF.clamp(diff | 0, 0, 2)]);   // the weekly camp XP cap (camp ends when it is reached)
   function isCaptain(c) { return levelOf(c).level >= CAPTAIN_LEVEL; }
   function trainKey(c) { return c.season + ':' + c.week + ':' + (c.playoffs ? c.playoffs.round : 'R'); }
   function contractLeft(c) { return c.contract.signed + c.contract.seasons - 1 - c.season; }   // seasons remaining after the current one
@@ -8376,7 +8458,7 @@ FF.career = (function () {
           const starInfo = Object.assign({}, c.star, { ratings: Object.assign({}, c.star.ratings), style: Object.assign({}, c.star.style), captain: isCaptain(c) });
           FF.go('game', { teams: home ? [team, opp] : [opp, team], humanTeam: home ? 0 : 1, difficulty: FF.settings.difficulty, mode: 'superstar', star: { teamIdx: home ? 0 : 1, info: starInfo }, career: c, weekLabel: c.playoffs ? String(c.playoffs.round) : 'WEEK ' + (c.week + 1) });
         } else if (it === 'TRAINING CAMP') {
-          // six plays against a coverage you pick, up to TRAIN_CAP XP, once a week
+          // six plays against a coverage the CPU picks, up to TRAIN_CAP XP (camp ends early once it is reached), once a week
           const team = D.teamById(c.teamId); const opp = D.teamById(this.nextOpp() ? this.nextOpp().id : D.TEAMS[(D.TEAMS.indexOf(team) + 1) % 16].id);
           const starInfo = Object.assign({}, c.star, { ratings: Object.assign({}, c.star.ratings), style: Object.assign({}, c.star.style), captain: isCaptain(c) });
           FF.go('game', { teams: [team, opp], humanTeam: 0, difficulty: FF.settings.difficulty, mode: 'training', star: { teamIdx: 0, info: starInfo }, career: c });
@@ -8756,13 +8838,13 @@ FF.career = (function () {
       const mult = C.DIFF_MULT[FF.clamp(g.difficulty | 0, 0, 2)]; const cap = Math.round(TRAIN_CAP * mult);
       this.earned = Math.max(0, g.starXP); this.paid = Math.min(cap, this.earned); this.cap = cap;
       c.xp += this.paid; c.careerStats.xp = (c.careerStats.xp || 0) + this.paid; c.seasonXP = (c.seasonXP || 0) + this.paid; c.trained = trainKey(c);
-      FF.saveCareer(c); this.plays = g.playsRun; FF.audio.music('menu');
+      FF.saveCareer(c); this.plays = g.playsRun; this.capped = this.earned >= cap; FF.audio.music('menu');
     },
     update(dt, input) { if (confirm(input) || back(input)) FF.go('superstar'); },
     draw(x, t) {
       UI.bg(x); header(x, 'TRAINING CAMP');
       const c = this.career; if (!c) return;
-      FF.text(x, this.plays + ' PLAYS RUN', W / 2, 50, { color: '#fff', outline: '#000', align: 'center' });
+      FF.text(x, this.plays + ' PLAYS RUN' + (this.capped && this.plays < TRAIN_PLAYS ? ' - XP CAP REACHED, CAMP ENDED EARLY' : ''), W / 2, 50, { color: '#fff', outline: '#000', align: 'center' });
       FF.text(x, 'XP EARNED ON THE FIELD: ' + this.earned, W / 2, 70, { font: FONT3x5, color: '#ddd', align: 'center' });
       FF.text(x, 'BANKED: +' + this.paid + ' XP  (WEEKLY CAP ' + this.cap + ')', W / 2, 82, { scale: 1, color: '#8cf38c', outline: '#000', align: 'center' });
       FF.text(x, 'BANK ' + c.xp + ' XP', W / 2, 100, { font: FONT3x5, color: '#8cf38c', align: 'center' });
@@ -9834,7 +9916,7 @@ FF.career = (function () {
     return scan;
   }
   function frame(now) {
-    ctx.setTransform(FF.PX, 0, 0, FF.PX, 0, 0); ctx.imageSmoothingEnabled = false;   // logical space, whatever a scene left behind
+    FF.applyTransform(ctx);   // logical space (with the wide-screen offset), whatever a scene left behind
     let dt = (now - last) / 1000; last = now;
     if (dt > 0.25) dt = 0.25;
     acc += dt;
@@ -9851,7 +9933,7 @@ FF.career = (function () {
     if (steps === 5) acc = 0;
     FF.drawScene(ctx, t);
     if (FF.fadeT > 0) { ctx.fillStyle = 'rgba(0,0,0,' + Math.min(1, FF.fadeT / 0.28).toFixed(2) + ')'; ctx.fillRect(0, 0, W, H); FF.fadeT -= dt; }
-    if (FF.settings.scanlines) ctx.drawImage(scanlines(), 0, 0);
+    if (FF.settings.scanlines) ctx.drawImage(scanlines(), -FF.OX, 0, FF.VW, H);
     requestAnimationFrame(frame);
   }
   window.addEventListener('error', e => {
