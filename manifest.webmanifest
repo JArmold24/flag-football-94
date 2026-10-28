@@ -1,0 +1,15 @@
+{
+  "name": "Flag Football '94",
+  "short_name": "Flag '94",
+  "description": "16-bit 5-on-5 flag football, Madden '94 style.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#14141c",
+  "theme_color": "#14141c",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
