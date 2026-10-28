@@ -1430,7 +1430,7 @@ FF.kb = function (s) {
   if (!(FF.touch && FF.touch.active) || !s) return s;
   // whole phrases first, then key-by-key: on a phone the right-hand buttons are labeled with the action itself
   // (SNAP, JUKE, PULL, SPIN, SWAT, DIVE, SPRINT, SWITCH, AUD, PLAY ART), so the hint names the button
-  s = s.replace(/THROW: 1 2 3 4/g, 'THROW: TAP A WINDOW').replace(/1-3: PICK IN WINDOW/g, 'TAP A TILE').replace(/1-4 \+ ARROW: HOT ROUTE/g, '').replace(/HOLD E \+ L\/R: MOTION/g, 'HOLD MOTION + STICK: MOTION')
+  s = s.replace(/THROW: 1 2 3 4/g, 'THROW: TAP A WINDOW').replace(/1-3: PICK IN WINDOW/g, 'TAP A TILE').replace(/1-4 \+ ARROW: HOT ROUTE/g, '').replace(/E: MOTION/g, 'MOTION: SEND #1 ACROSS')
     .replace(/R: INSTANT REPLAY/g, 'REPLAY BUTTON').replace(/\bR: SPEED/g, 'SPEED').replace(/UP\/DOWN: CAMERA/g, 'CAM').replace(/LEFT\/RIGHT: SCRUB/g, 'STICK: SCRUB');
   const seg = s.split(/ {3,}/).map(t => t.trim()).filter(Boolean).map(t => {
     const m = t.match(/^(SPACE|E|SHIFT|TAB|Q|V|ESC|ENTER|ARROWS)\s*:\s*(.*)$/);
@@ -1800,7 +1800,7 @@ Object.assign(FF, { hexToRgb, rgbToHex, shade, tint, luma, rgbToHsl, hslToRgb, s
 /* ------------------------------------------------------------ settings */
 FF.defaultSettings = () => ({
   halfMinutes: 4, downsToCross: 4, downsToScore: 4, twoMinuteStops: true, timeouts: 1,
-  difficulty: 1, penalties: true, intSpot: 'spot', qbRun: 'always', fractionalScale: false, scanlines: false,
+  difficulty: 1, dynWins: 0, penalties: true, intSpot: 'spot', qbRun: 'always', fractionalScale: false, scanlines: false,
   sfx: true, music: true, autoPull: false, runoff: 10, playStyle: 'classic', gameSpeed: 'normal', aimSens: 'medium', passView: 'field', readAids: false, cfgVer: 23,
 });
 FF.load = function (key, fallback) { try { const v = localStorage.getItem('ff94_' + key); return v ? JSON.parse(v) : fallback; } catch (e) { return fallback; } };
@@ -1813,6 +1813,17 @@ FF.gameSpeed = () => ({ slow: 0.72, normal: 0.85, fast: 1 })[FF.settings.gameSpe
 FF.saveSettings = () => FF.save('settings', FF.settings);
 
 fitCanvas();
+
+/* DIFFICULTY: ROOKIE / PRO / ALL-PRO, or DYNAMIC - a level that starts between Rookie and Pro and climbs a notch
+   with every win against the CPU (a loss holds it), up to a little past All-Pro. FF.effDiff gives the number
+   the simulation uses (0 = Rookie, 1 = Pro, 2 = All-Pro, fractional in between). */
+FF.DIFF_NAMES = ['ROOKIE', 'PRO', 'ALL-PRO', 'DYNAMIC'];
+FF.DYN_MAX = 16;
+FF.dynWins = () => FF.clamp((FF.settings && FF.settings.dynWins) | 0, 0, FF.DYN_MAX - 1);
+FF.dynLevel = w => 0.6 + 0.12 * (w == null ? FF.dynWins() : w);          // 0.6 ... 2.4
+FF.effDiff = d => d === 3 ? FF.dynLevel() : FF.clamp(d == null ? 1 : +d, 0, 2.4);
+FF.diffName = d => d === 3 ? 'DYNAMIC LV ' + (FF.dynWins() + 1) : FF.DIFF_NAMES[FF.clamp(d | 0, 0, 2)];
+FF.diffMult = d => { const L = FF.effDiff(d); return L <= 1 ? 0.8 + 0.2 * L : 1 + 0.25 * (L - 1); };   // XP: 0.8 / 1.0 / 1.25 (and up)
 
 </script>
 <script>
@@ -3954,7 +3965,8 @@ FF.Sim = (function () {
       this.players = []; this.events = []; this.sfx = []; this.result = null; this.deadT = 0;
       this.thrown = false; this.handedOff = false; this.passClock = null; this.windowsOpen = false; this.windowTargets = [];
       this.attackDir = 1; this.carrier = null; this.penalty = null; this.messages = [];
-      this.diff = DIFF[FF.clamp(this.difficulty | 0, 0, 2)];
+      this.dlev = FF.effDiff(this.difficulty);
+      { const L = this.dlev, i = Math.min(1, Math.floor(L)), u = L - i, a = DIFF[i], b = DIFF[i + 1]; this.diff = {}; for (const k in a) this.diff[k] = a[k] + (b[k] - a[k]) * u; }   // fractional levels (DYNAMIC) blend the table; past All-Pro it extrapolates
       this.ball = { state: 'held', holder: null, x: BALLX, y: this.los, z: 0 };
       this.routeGuide = null; this.callForBall = 0; this.audible = null; this.motion = null;
       this.cpuSnapAt = 1.0 + rnd.f() * 1.2;
@@ -4013,7 +4025,7 @@ FF.Sim = (function () {
         if (p.slot === 'QB') continue;
         const rn = play.routes[p.slot];
         if (play.type === 'run' && play.carrier === p.slot) { p.runPath = this.expandRunPath(play, p); p.isCarrierSlot = true; }
-        p.route = this.expandPath(D.routeOf(rn), p.rside, p);
+        p.route = this.expandPath(D.routeOf(rn), p.rside, p); p.routeKey = rn;
       }
       // labels A/B/C/D
       this.labels = {};
@@ -4123,8 +4135,8 @@ FF.Sim = (function () {
       const tight = base <= 2, loose = base >= 4;
       const cov = d.info.ratings.cov / 99;
       let press = tight ? 0.5 : loose ? 0.2 : 0.33, soft = tight ? 0.12 : loose ? 0.33 : 0.22;
-      if (this.difficulty === 0) { press -= 0.08; soft += 0.1; }
-      if (this.difficulty === 2) { press += 0.06; soft -= 0.04; }
+      if (this.dlev < 0.5) { press -= 0.08; soft += 0.1; }
+      if (this.dlev >= 1.5) { press += 0.06; soft -= 0.04; }
       if (rec.maxSpeed > d.maxSpeed + 0.5) { press -= 0.12; soft += 0.12; }    // a slower defender respects speed
       const u = rnd.f();
       if (d.isHuman) return { name: 'off', cushion: base };
@@ -4167,6 +4179,15 @@ FF.Sim = (function () {
       return false;
     }
     sfxQ(name) { this.sfx.push(name); }
+    // who may change the call at the line: anyone outside Superstar; in Superstar a quarterback the coach trusts
+    // (FEATURED, coach trust 60+) runs audibles, hot routes and motion, and a FRANCHISE player (80+) or the captain
+    // may check the defense
+    mayCall(side) {
+      if (!this.star) return true;
+      const tr = this.star.trust == null ? 50 : this.star.trust;
+      if (side === 'off') return this.controlled === this.qb && tr >= 60;
+      return tr >= 80 || !!this.star.captain;
+    }
 
     /* -------------------------------------------------------- update */
     update(dt, input) {
@@ -4176,6 +4197,13 @@ FF.Sim = (function () {
       else this.updateDead(dt, input);
       this.integrate(dt);
       this.ballFollow();
+      if (this.star && this.phase === 'live') this.trackStar();
+    }
+    // SUPERSTAR play grades: how well the star did his job on the play (route discipline, getting open, his coverage man)
+    trackStar() {
+      const me = this.controlled; if (!me) return;
+      const T = this.starTrack || (this.starTrack = { route: me.side === 'off' && me !== this.qb && me.route ? me.route.filter(w => w.x != null).map(w => [w.x, w.y]) : [], hit: 0, assign: me.side === 'def' && me.assign ? { type: me.assign.type, target: me.assign.target || null } : null });
+      if (!this.thrown && T.hit < T.route.length) { const w = T.route[T.hit]; if (FF.dist(me.x, me.y, w[0], w[1]) < 1.8) T.hit++; }
     }
 
     /* ------------------------------------------------------ presnap */
@@ -4217,16 +4245,12 @@ FF.Sim = (function () {
       if (this.humanSide === 'off') {
         if (this.audible) this.handleAudible(input);
         else {
-          if (input.pressed('Q') && !this.star) { this.audible = { side: 'off', t: 0 }; }
-          // motion: hold E + left/right moves receiver 1 parallel to the line
-          const a = this.labels.A;
-          if (input.down('B') && a && a.slot !== 'QB' && !this.star) {
-            const ax = input.axis().x;
-            if (ax !== 0) { this.motion = this.motion || { p: a }; a.wantDir = [ax, 0]; a.wantSpeed = 0.5; a.tx = FF.clamp(a.tx + ax * dt * 3.2, 1, F.FW - 1); }
-            else { a.wantDir = [0, 0]; a.wantSpeed = 0; }
-          } else if (this.motion) { this.motion.p.wantDir = [0, 0]; this.motion.p.wantSpeed = 0; this.motion.p.x = this.motion.p.tx; this.motion = null; }
+          if (input.pressed('Q') && this.mayCall('off')) { this.audible = { side: 'off', t: 0 }; }
+          // MOTION: tap E / the MOTION button and receiver 1 jogs across the formation (snap while he is moving);
+          // tap again and he sets. Or hold E + left/right to walk him by hand.
+          this.updateMotion(input, dt);
           // hot routes: tap the receiver's number, then an arrow (UP go, DOWN hitch, LEFT/RIGHT break that way)
-          if (!this.star && this.set) {
+          if (this.mayCall('off') && this.set) {
             for (const [k, L] of [['T1', 'A'], ['T2', 'B'], ['T3', 'C'], ['T4', 'D']]) if (input.pressed(k)) { const r = this.labels[L]; if (r && r !== this.qb) { this.hot = { r, t: 1.2 }; this.messages.push({ text: 'HOT ROUTE #' + r.info.num + ': PRESS AN ARROW', t: 1.2 }); } }
             if (this.hot) {
               this.hot.t -= dt;
@@ -4234,7 +4258,7 @@ FF.Sim = (function () {
               if (input.pressed('UP')) { nr = 'GO'; nm = 'GO'; }
               else if (input.pressed('DOWN')) { nr = 'HITCH'; nm = 'HITCH'; }
               else if (input.pressed('LEFT') || input.pressed('RIGHT')) { const dir = input.pressed('LEFT') ? -1 : 1; const out = dir === (this.hot.r.rside || 1); nr = out ? 'OUT' : 'DIG'; nm = out ? 'OUT' : 'IN'; }
-              if (nr) { const r = this.hot.r; r.route = this.expandPath(D.routeOf(nr), r.rside, r); r.runPath = null; r.isCarrierSlot = false; this.messages.length = 0; this.messages.push({ text: 'HOT: #' + r.info.num + ' ' + nm, t: 1.4 }); this.sfxQ('blip'); this.hot = null; if (this.controlled === r && r.route) this.routeGuide = null; }
+              if (nr) { const r = this.hot.r; r.route = this.expandPath(D.routeOf(nr), r.rside, r); r.routeKey = nr; r.runPath = null; r.isCarrierSlot = false; this.messages.length = 0; this.messages.push({ text: 'HOT: #' + r.info.num + ' ' + nm, t: 1.4 }); this.sfxQ('blip'); this.hot = null; if (this.controlled === r && r.route) this.routeGuide = null; }
               else if (this.hot.t <= 0) this.hot = null;
             }
           }
@@ -4248,15 +4272,48 @@ FF.Sim = (function () {
         if (this.audible) this.handleAudible(input);
         else {
           if (input.pressed('SWITCH') && !this.star) this.cycleDefender();
-          if (input.pressed('Q') && !this.star) this.audible = { side: 'def', t: 0 };
+          if (input.pressed('Q') && this.mayCall('def')) this.audible = { side: 'def', t: 0 };
         }
       }
+    }
+    updateMotion(input, dt) {
+      const a = this.labels.A;
+      if (!a || a.slot === 'QB' || !this.mayCall('off') || a.isCarrierSlot) return;
+      const m = this.motion;
+      const ax = input.axis().x;
+      if (input.down('B') && ax !== 0) {   // by hand
+        this.motion = { p: a, manual: true, x0: m ? m.x0 : a.tx };
+        a.wantDir = [ax, 0]; a.wantSpeed = 0.5; a.tx = FF.clamp(a.tx + ax * dt * 3.2, 1, F.FW - 1); a.x = FF.clamp(a.x + ax * dt * 3.2, 1, F.FW - 1); a.vx = ax * 3.2; a.vy = 0;
+      } else if (input.released('B') && m && m.manual) { a.wantDir = [0, 0]; a.wantSpeed = 0; a.vx = 0; m.manual = false; m.set = true; }
+      else if (input.pressed('B') && ax === 0 && !(m && m.manual)) {
+        if (m && m.auto) { m.auto = false; m.set = true; a.tx = a.x; a.wantDir = [0, 0]; a.wantSpeed = 0; a.vx = 0; this.messages.push({ text: '#' + a.info.num + ' SETS', t: 0.8 }); }
+        else { const dir = a.x < BALLX ? 1 : -1; this.motion = { p: a, auto: true, dir, x0: a.tx, stop: BALLX + dir * 5 }; this.messages.push({ text: 'MOTION: #' + a.info.num, t: 0.9 }); this.sfxQ('blip'); }
+      }
+      const mm = this.motion;
+      if (mm && mm.auto) {
+        const sp = a.maxSpeed * 0.5; a.x += mm.dir * sp * dt; a.vx = mm.dir * sp; a.vy = 0; a.tx = a.x; a.wantDir = [mm.dir, 0]; a.wantSpeed = 0.5; a.facing = mm.dir > 0 ? 0 : 4; a.pose = 'run';
+        if ((mm.dir > 0 && a.x >= mm.stop) || (mm.dir < 0 && a.x <= mm.stop) || a.x < 1.5 || a.x > F.FW - 1.5) { mm.auto = false; mm.set = true; a.vx = 0; a.wantDir = [0, 0]; a.wantSpeed = 0; }
+      }
+      // the man assigned to him has to travel with him (a zone defense lets him go): the motion tells you man or zone
+      if (this.motion) for (const d of this.def) {
+        if (d.isHuman || !d.assign || d.assign.type !== 'man' || d.assign.target !== a) continue;
+        if (d.motionDx == null) d.motionDx = d.tx - this.motion.x0;
+        d.tx = FF.clamp(a.x + (a.x > BALLX ? -0.6 : a.x < BALLX ? 0.6 : 0), 1, F.FW - 1);
+      }
+    }
+    // at the snap a receiver who moved runs his route from where he is now (and keeps his running start)
+    rebaseMotion() {
+      const m = this.motion; if (!m) return;
+      const p = m.p; if (Math.abs(p.x - m.x0) < 0.4) return;
+      p.tx = p.x; p.rside = p.x < BALLX ? -1 : 1;
+      if (p.routeKey) p.route = this.expandPath(D.routeOf(p.routeKey), p.rside, p);
+      p.motionStart = m.auto ? [p.vx, 0] : null;
     }
     handleAudible(input) {
       const a = this.audible; a.t += (1 / 60);
       let choice = null;
       if (input.pressed('T1')) choice = 0; else if (input.pressed('T2')) choice = 1; else if (input.pressed('T3')) choice = 2;
-      if (input.pressed('BACK') || a.t > 3) { this.audible = null; return; }
+      if (input.pressed('BACK') || a.t > (FF.touch && FF.touch.active ? 6 : 4)) { this.audible = null; return; }
       if (choice == null) return;
       if (a.side === 'off') {
         const page = D.humanPlays()[D.FORMATIONS.indexOf(this.formation)];
@@ -4269,7 +4326,7 @@ FF.Sim = (function () {
             if (p.slot === 'QB') continue;
             p.runPath = null; p.isCarrierSlot = false;
             if (np.type === 'run' && np.carrier === p.slot) { p.runPath = this.expandRunPath(np, p); p.isCarrierSlot = true; }
-            const rn = np.routes[p.slot]; p.route = this.expandPath(D.routeOf(rn), p.rside, p);
+            const rn = np.routes[p.slot]; p.route = this.expandPath(D.routeOf(rn), p.rside, p); p.routeKey = rn;
           }
           this.labels = {}; ['A', 'B', 'C', 'D'].forEach((L, i) => { const p = this.off.find(q => q.slot === np.labels[i]); if (p) this.labels[L] = p; });
           this.messages.push({ text: 'AUDIBLE: ' + np.name, t: 1.4 });
@@ -4292,6 +4349,7 @@ FF.Sim = (function () {
       this.sfxQ('blip');
     }
     snap() {
+      this.rebaseMotion();
       this.phase = 'live'; this.t = 0; this.passClock = 7; this.motion = null; this.audible = null;
       this.ball.state = 'snap'; this.ball.t = 0; this.ball.T = 0.25; this.ball.fx = this.center.x; this.ball.fy = this.center.y; this.ball.holder = null; this.center.hasBall = false;
       for (const p of this.off) { if (p.slot !== 'QB') { this.setState(p, 'route'); p.routeIdx = 0; } }
@@ -4312,12 +4370,12 @@ FF.Sim = (function () {
         d.rushGo = d.reaction;
       }
       // All-Pro CPU defenses disguise: show one coverage, rotate into another at the snap (rushers never change)
-      if (this.humanSide !== 'def' && this.difficulty === 2 && rnd.chance(0.3)) this.disguise();
+      if (this.humanSide !== 'def' && this.dlev >= 1.5 && rnd.chance(0.3 * Math.min(1.3, this.dlev - 1))) this.disguise();
       // play action: the quarterback sells the handoff and coverage defenders near the line take a step up
       if (this.play.type === 'pass' && this.play.playAction) {
         const rb = this.off.find(p => p.slot === 'RB') || this.off.find(p => p.slot !== 'QB' && p.slot !== 'C');
         this.qb.fakeT = 0.38; this.qb.fakeDir = rb ? F.dirFrom(rb.x - this.qb.x, rb.y - this.qb.y) : 2;
-        const diffK = [1.0, 0.8, 0.55][this.difficulty] || 0.8;
+        const diffK = FF.clamp(1.0 - 0.2 * Math.min(1, this.dlev) - 0.25 * Math.max(0, this.dlev - 1), 0.4, 1);
         for (const d of this.def) {
           if (d.isHuman || d.assign.type === 'rush' || d.y - this.los > 9) continue;
           const cov = d.info.ratings.cov / 99;
@@ -4407,7 +4465,7 @@ FF.Sim = (function () {
           const reach = this.reachOf(d);
           const dd = FF.dist(d.x, d.y, c.x, c.y);
           if (dd <= reach) {
-            const auto = !d.isHuman || d !== this.controlled || this.settings.autoPull || this.difficulty === 0;
+            const auto = !d.isHuman || d !== this.controlled || this.settings.autoPull || this.dlev < 0.5;
             if (auto || d.wantPull) { this.attemptPull(d, c); if (this.phase !== 'live') return; }
           }
           d.wantPull = false;
@@ -4776,6 +4834,7 @@ FF.Sim = (function () {
         if (t > 0.15 && t < 0.9) { const px = qb.x + (r.x - qb.x) * t, py = qb.y + (r.y - qb.y) * t; if (FF.dist(d.x, d.y, px, py) < 1.3) s -= 2.5; }
       }
       if (this.star && r.info.id === this.star.id && this.callForBall > 0) s += 2.5;
+      if (this.star && r.info.id === this.star.id) s += FF.clamp(((this.star.trust == null ? 50 : this.star.trust) - 50) / 50, -1, 1) * 1.5;   // COACH TRUST: a featured player gets looks, a rotation player has to earn them
       // unaware QB on lower difficulty reads less of the field
       if (!qb.isHuman) s += (rnd.f() - 0.5) * (1 - this.diff.cpuRead) * 3;
       return s;
@@ -4939,6 +4998,7 @@ FF.Sim = (function () {
       b.apex = kind === 'bullet' ? 1.6 + dd * 0.03 : 2.8 + dd * 0.11;
       b.x = qb.x; b.y = qb.y; b.z = 1.4;
       this.thrown = true; this.windowsOpen = false; this.fieldTargets = false; this.passClock = null; this.callForBall = 0;
+      if (this.star && this.controlled && this.controlled.side === 'off' && this.controlled !== qb) this.pf.starSep = this.nearest(this.def, this.controlled.x, this.controlled.y).d;
       { const n = this.nearest(this.def, qb.x, qb.y); this.pf.throwT = this.t; this.pf.lob = kind === 'lob'; if (n.p && n.d < 2.4) { this.pf.pressured = true; this.pf.presser = n.p; } if (this.qbScramble || (qb.scrambleTot || 0) > 0.4) this.pf.qbRan = true; }
       const near = this.def.some(d => FF.dist(d.x, d.y, qb.x, qb.y) < 1.7);
       this.setState(qb, 'throw'); qb.pose = near && rnd.chance(0.7) ? 'throwJump' : 'throw'; qb.frame = 1; qb.animT = 0;
@@ -4973,6 +5033,7 @@ FF.Sim = (function () {
         let s = Math.cos(rad) * 2.2;
         const px = p.x + hx * p.maxSpeed * look, py = p.y + hy * p.maxSpeed * look;
         if (px < 1.5 || px > F.FW - 1.5) s -= 5;
+        if (!p.isHuman && this.clockMode && this.attackDir > 0 && p.y - this.los > 2) { const edge = Math.min(px, F.FW - px); if (this.clockMode === 'hurry') s += Math.max(0, 6 - edge) * 0.25; else s -= Math.max(0, 5 - edge) * 0.3; }   // late game: get out of bounds / stay in
         if (p.x + hx * 2 < 0.8 || p.x + hx * 2 > F.FW - 0.8) s -= 6;
         for (const d of opp) {
           if (d.state === 'stumble') continue;
@@ -5055,7 +5116,7 @@ FF.Sim = (function () {
             const hd = [r.vx / sp, r.vy / sp];
             if (!p.rHead) p.rHead = hd;
             const dot = p.rHead[0] * hd[0] + p.rHead[1] * hd[1];
-            if (dot < 0.55 && (p.cutCd || 0) <= this.t && this.t > 0.4) { const k = [1.3, 1.0, 0.75][this.difficulty] || 1; p.cutLag = this.t + Math.max(0.05, 0.16 + (1 - cov) * 0.24 + (r.info.ratings.rte / 99 - 0.72) * 0.4 + (tech === 'press' ? 0.08 : 0)) * k; p.cutDir = p.rHead.slice(); p.cutCd = this.t + 0.9; }
+            if (dot < 0.55 && (p.cutCd || 0) <= this.t && this.t > 0.4) { const k = FF.clamp(1.3 - 0.3 * Math.min(1, this.dlev) - 0.25 * Math.max(0, this.dlev - 1), 0.6, 1.3); p.cutLag = this.t + Math.max(0.05, 0.16 + (1 - cov) * 0.24 + (r.info.ratings.rte / 99 - 0.72) * 0.4 + (tech === 'press' ? 0.08 : 0)) * k; p.cutDir = p.rHead.slice(); p.cutCd = this.t + 0.9; }
             p.rHead = norm(p.rHead[0] * 0.75 + hd[0] * 0.25, p.rHead[1] * 0.75 + hd[1] * 0.25);
           }
         }
@@ -5066,6 +5127,7 @@ FF.Sim = (function () {
         if (tech === 'press') cushion = Math.max(redZone ? 0.8 : 1.1, 1.3 - this.t * 0.2) + (faster ? 1.0 : 0);
         else if (tech === 'soft') cushion = Math.max(r.y - this.los > 9 ? 2.4 : 3.6, a.cushion - this.t * 0.9) + (faster ? 0.6 : 0);
         else cushion = Math.max(redZone ? 1.2 : 2.2, (a.cushion - this.t * 0.55) * (redZone ? 0.7 : 1) + (faster ? 0.8 : 0));
+        if (this.adapt && !p.isHuman) cushion += this.adapt.deepShade * 1.2;   // DYNAMIC: he has been beaten deep before, so he gives a deeper cushion
         const nearSide = h[0] < 4.5 || h[0] > F.FW - 4.5;                    // the sideline is a second defender: shade hard inside
         let tx = h[0] + (h[0] > BALLX ? -1 : 1) * (nearSide ? 0.9 : tech === 'press' ? 0.6 : 0.4);
         let ty = h[1] + cushion;
@@ -5153,7 +5215,7 @@ FF.Sim = (function () {
     ballAI(p) {
       const b = this.ball;
       // defenders need a beat to read the throw before breaking on the ball
-      if (p.ballReact == null) p.ballReact = this.t + (p.isHuman ? 0 : Math.max(0.03, 0.1 + (1 - p.info.ratings.cov / 99) * 0.25 + this.diff.cpuReact * 0.3 + (b.to && FF.dist(p.x, p.y, b.to.x, b.to.y) < 4 ? (b.to.info.ratings.rte / 99 - 0.72) * 0.35 : 0)));   // the man on a crisp route runner (ROUTES) is still turning when the ball comes out
+      if (p.ballReact == null) p.ballReact = this.t + (p.isHuman ? 0 : Math.max(0.03, 0.1 + (1 - p.info.ratings.cov / 99) * 0.25 + this.diff.cpuReact * 0.3 + (b.to && FF.dist(p.x, p.y, b.to.x, b.to.y) < 4 ? (b.to.info.ratings.rte / 99 - 0.72) * 0.35 : 0) - (this.adapt && this.adapt.side && b.to && ((this.adapt.side === 'left' && b.to.x < 13) || (this.adapt.side === 'right' && b.to.x > 17)) ? this.adapt.sideK * 0.12 : 0)));   // the man on a crisp route runner (ROUTES) is still turning when the ball comes out
       if (this.t < p.ballReact) { if (p.assign.type === 'man' && p.assign.target) this.moveToward(p, p.assign.target.x, p.assign.target.y + 1, 0.9); else this.moveToward(p, p.x + p.vx * 0.2, p.y + p.vy * 0.2, 0.8); return; }
       const dd = FF.dist(p.x, p.y, b.lx, b.ly);
       const canReach = dd / (p.maxSpeed * 1.2) < (b.T - b.t) + 0.35;
@@ -5358,7 +5420,7 @@ FF.Sim = (function () {
       this.phase = 'dead'; this.deadT = 0; this.result = res; this.windowsOpen = false; this.fieldTargets = false;
       res.los = this.los; res.attackDir = this.attackDir; res.carrier = this.carrier || (res.type === 'oob' && this.qb.hasBall ? this.qb : null); res.penaltyPre = this.penalty;
       res.thrown = this.thrown; res.handedOff = this.handedOff; res.to = this.ball.to; res.intBy = this.intBy || null;
-      res.f = Object.assign({}, this.pf, { t: this.t, qb: this.qb, kind: this.ball.kind, catchKind: res.carrier && res.carrier.catchKind, startX: res.carrier ? (res.carrier.ox != null ? res.carrier.ox : null) : null, endX: res.carrier ? res.carrier.x : null, intY: this.intSpot });
+      res.f = Object.assign({}, this.pf, { star: this.controlled && this.star ? this.controlled : null, starTrack: this.starTrack || null, t: this.t, qb: this.qb, kind: this.ball.kind, catchKind: res.carrier && res.carrier.catchKind, startX: res.carrier ? (res.carrier.ox != null ? res.carrier.ox : null) : null, endX: res.carrier ? res.carrier.x : null, intY: this.intSpot });
       // yardage
       if (res.type === 'pull' || res.type === 'oob' || res.type === 'td' || res.type === 'sack' || res.type === 'safety') {
         res.yards = this.attackDir > 0 ? Math.round(res.spot - this.los) : null;
@@ -5486,11 +5548,62 @@ FF.Game = (function () {
   const D = FF.data, F = FF.field;
   const DEEP = new Set(['FOUR VERTS', 'HAIL MARY', 'DOUBLE POST', 'FADE', 'HITCH-GO', 'OUT-UP', 'PA POST', 'CORNER-POST', 'STACK RELEASE', 'SMASH', 'WHEEL', 'FLOOD', 'TRIPS VERTS', 'PA DEEP', 'SLOT WHEEL', 'TRIPS WHEEL']);
 
+  /* DYNAMIC difficulty, part two: the CPU keeps a book on you over the game and leans against your habits, within
+     limits (it never shuts a habit down, it only makes it a little harder, and only after it has seen enough).
+     On offense it tracks run vs pass, deep vs short and which side you throw to; on defense how often you blitz,
+     play man or sit in zone. */
+  class Adaptive {
+    constructor() { this.o = { n: 0, run: 0, pass: 0, deep: 0, short: 0, left: 0, right: 0 }; this.d = { n: 0, blitz: 0, man: 0, zone: 0 }; this.lastBias = 1; }
+    k(n) { return n < 4 ? 0 : 0.6 * Math.min(1, (n - 3) / 8); }            // ramps in after 4 plays, capped
+    recordOff(r) {
+      const o = this.o; o.n++;
+      if (!r.thrown && !r.intBy) { o.run++; return; }
+      o.pass++;
+      const ly = r.f && r.f.catchY != null ? r.f.catchY : null; const to = r.to;
+      const depth = to ? (ly != null ? ly : to.y) - r.los : 0;
+      if (depth >= 12) o.deep++; else if (depth <= 6) o.short++;
+      if (to) { if (to.x < 13) o.left++; else if (to.x > 17) o.right++; }
+    }
+    recordDef(front) {
+      const d = this.d; d.n++;
+      if (/BLITZ/.test(front.name)) d.blitz++;
+      else if (/COVER 1|MAN|RED ZONE/.test(front.name)) d.man++;
+      else d.zone++;
+    }
+    // a multiplier on the CPU defense's weight for this front, from the human's offensive habits
+    frontBias(f, game) {
+      const o = this.o, k = this.k(o.n); if (!k || game.humanSide() !== 'off') return 1;
+      const runR = o.run / o.n, passR = 1 - runR, deepR = o.pass ? o.deep / o.pass : 0, shortR = o.pass ? o.short / o.pass : 0;
+      let b = 1;
+      if (/COVER 2|COVER 3|PREVENT/.test(f.name)) b += k * passR * (deepR - 0.3) * 2.2;
+      if (/COVER 1|ZERO BLITZ|MAN UNDER/.test(f.name)) b += k * passR * (shortR - 0.4) * 2.2;
+      if (/ZERO BLITZ|QB SPY|RED ZONE/.test(f.name)) b += k * (runR - 0.3) * 1.8;
+      return FF.clamp(b, 0.6, 1.6);
+    }
+    // a multiplier on the CPU offense's weight for a play, from the human's defensive habits
+    playBias(pr, game) {
+      const d = this.d, k = this.k(d.n); if (!k || game.humanSide() !== 'def') return 1;
+      const bl = d.blitz / d.n, man = d.man / d.n, zone = d.zone / d.n;
+      let b = 1;
+      if (pr.run) b += k * (zone - 0.35) * 1.6 - k * (bl - 0.2) * 1.2;           // run at soft zones, not into a blitz
+      else { b += k * (bl - 0.2) * (pr.quick ? 2.2 : -0.8); b += k * (man - 0.35) * (pr.deep ? 1.6 : 0); b += k * (zone - 0.35) * (pr.quick ? 1.2 : 0); }
+      return FF.clamp(b, 0.6, 1.6);
+    }
+    // hints the simulation uses in coverage: a deeper shade against a deep thrower, a quicker eye on the favorite side
+    simHints(game) {
+      const o = this.o, k = this.k(o.n); if (!k || game.humanSide() !== 'off' || !o.pass) return null;
+      const deepR = o.deep / o.pass, side = o.left > o.right * 1.6 ? 'left' : o.right > o.left * 1.6 ? 'right' : null;
+      return { deepShade: FF.clamp(k * (deepR - 0.3) * 2, 0, 0.5), side, sideK: side ? k * 0.5 : 0 };
+    }
+  }
+
   class Game {
     // opts: { teams:[home,away], humanTeam: 0|1|null, star:{teamIdx, info}|null, settings, difficulty, mode, onEnd, fast }
     constructor(opts) {
       Object.assign(this, opts);
       this.settings = this.settings || FF.settings;
+      this.adaptive = this.difficulty === 3 && this.humanTeam != null && this.mode !== 'demo' ? new Adaptive() : null;
+      this.playGrades = []; this.gradePopup = null;
       this.score = [0, 0]; this.half = 1; this.clock = this.settings.halfMinutes * 60; this.clockRunning = false;
       this.timeouts = [this.settings.timeouts, this.settings.timeouts];
       this.possession = 0; this.los = 15; this.down = 1; this.target = 'mid';
@@ -5615,6 +5728,7 @@ FF.Game = (function () {
       if (this.mode !== 'demo' && FF.audio) FF.audio.music('huddle');   // a quiet loop while the play is picked
       const hs = this.practice ? (this.mode === 'training' ? 'off' : 'both') : this.humanSide();   // training camp: the CPU calls the defense
       this.callUI = FF.ui.makePlaycall(this, hs);
+      this.cpuTimeout();
       // CPU choices are made immediately (hidden)
       this.cpuOff = (hs === 'off' || hs === 'both') ? null : this.pickOffense();
       this.cpuDef = (hs === 'def' || hs === 'both') ? null : this.pickDefense();
@@ -5649,46 +5763,122 @@ FF.Game = (function () {
       if (!replay) this.down++;
       if (against === 'def' && this.target === 'mid' && this.los >= F.MID) { this.target = 'goal'; this.down = 1; }
     }
+    /* -------------------------------------------- situational CPU play-calling
+       The CPU reads the down and distance (as yards needed per down left: this game's line to gain is midfield,
+       then the goal line), the field zone, the score and the clock, and calls the play a coordinator would:
+       a two-minute drill when it has to score (passes, sideline routes, hurry-up, timeouts), it runs the clock when
+       it is protecting a lead late, it throws past the line on the last down, it pounds it at the goal line. */
+    situation() {
+      const offIdx = this.possession, dist = Math.max(1, this.gainY() - this.los);
+      const downsLeft = Math.max(1, this.downsAllowed() - this.down + 1);
+      const diff = this.score[offIdx] - this.score[1 - offIdx];            // + = the offense leads
+      const late = (this.half === 2 && this.clock <= 150) || !!this.ot;
+      const endHalf = this.half === 1 && this.clock <= 45;
+      const toGoal = F.GOAL1 - this.los;
+      return {
+        dist, downsLeft, need: dist / downsLeft, last: downsLeft === 1, diff, late, toGoal,
+        redZone: toGoal <= 10, goalLine: toGoal <= 4,
+        hurry: !this.conversion && ((late && diff <= 0) || (late && diff < 0) || (endHalf && toGoal <= 35)),
+        milk: !this.conversion && this.half === 2 && this.clock <= 180 && diff > 0 && !this.ot,
+        desperate: this.half === 2 && this.clock <= 30 && diff < 0,
+      };
+    }
+    // the depth and shape of a play's routes, computed once from the route library
+    playProfile(play) {
+      this.profiles = this.profiles || new Map();
+      if (this.profiles.has(play)) return this.profiles.get(play);
+      let maxD = 0, sideline = 0, quick = 0;
+      for (const slot in play.routes || {}) {
+        const pts = (D.routeOf(play.routes[slot]) || []).filter(w => w.wait == null);
+        if (!pts.length) continue;
+        const d = Math.max(...pts.map(w => w[1])); maxD = Math.max(maxD, d);
+        if (d <= 6) quick++;
+        const end = pts[pts.length - 1]; if (end[0] >= 5) sideline++;
+      }
+      const pr = { run: play.type === 'run', deep: DEEP.has(play.name), maxD, sideline: sideline >= 2 ? sideline : 0, quick };
+      this.profiles.set(play, pr); return pr;
+    }
     pickOffense() {
       const style = this.offense().style;
       const nrz = (this.los >= F.MID - 5 && this.los < F.MID) || (this.los >= F.GOAL1 - 5 && this.los < F.GOAL1);
-      const dist = this.gainY() - this.los;
+      const S = this.situation(); this.cpuSit = S;
       const fIdx = [];
       D.FORMATIONS.forEach((f, i) => {
         let w = 1;
-        if (f.name === 'RED ZONE') w = this.los >= 50 ? 2.2 : 0.15;
-        if (f.name === 'EMPTY' || f.name === 'SPREAD') w *= style === 'pass' ? 1.5 : 1;
-        if (f.name === 'POWER' || f.name === 'TWINS') w *= style === 'run' ? 1.6 : 1;
+        if (f.name === 'RED ZONE') w = S.redZone ? 2.2 : 0.15;
+        if (f.name === 'EMPTY' || f.name === 'SPREAD') w *= (style === 'pass' ? 1.5 : 1) * (S.hurry || S.need > 8 ? 1.6 : 1);
+        if (f.name === 'POWER' || f.name === 'TWINS') w *= (style === 'run' ? 1.6 : 1) * (S.milk ? 1.8 : 1) * (S.goalLine ? 1.4 : 1);
         if (nrz && (f.name === 'POWER' || f.name === 'TWINS')) w *= 0.5;
         fIdx.push(w);
       });
       const fi = this.weighted(fIdx);
       const plays = D.PLAYS[fi];
       const w = plays.map(p => {
-        if (p.type === 'run') return nrz ? 0 : (style === 'run' ? 0.9 : 0.55) * (dist < 8 ? 1.3 : 0.8);
-        const deep = DEEP.has(p.name);
-        if (deep) return dist >= 14 ? 1.3 : (this.down >= 3 && dist > 10 ? 1.2 : 0.55);
-        return 1;
+        const pr = this.playProfile(p);
+        let x = 1;
+        if (pr.run) {
+          if (nrz || this.conversion && this.los < 55) return nrz ? 0 : 0.6;
+          x = (style === 'run' ? 0.9 : 0.55);
+          x *= S.need <= 3 ? 1.5 : S.need <= 7 ? 1 : 0.45;
+          if (S.milk) x *= 2.2; if (S.hurry) x *= 0.2; if (S.goalLine) x *= 1.4;
+          if (this.adaptive) x *= this.adaptive.playBias(pr, this);
+          if (S.last && S.dist > 3) x *= 0.15;
+          return x;
+        }
+        if (pr.deep) x = S.need >= 10 || S.dist >= 18 ? 1.4 : 0.55; else x = 1;
+        if (S.last) x *= pr.maxD >= S.dist ? 2.2 : 0.25;                     // throw it past the line on the last down
+        if (S.need <= 3 && pr.quick) x *= 1.4;
+        if (S.hurry) x *= 1 + pr.sideline * 0.35;                           // the sideline stops the clock
+        if (S.desperate) x *= pr.deep ? 2.5 : 0.6;
+        if (S.milk) x *= pr.deep ? 0.35 : pr.quick ? 1.3 : 1;
+        if (S.redZone && pr.deep && S.toGoal < 12) x *= 0.6;
+        if (this.adaptive) x *= this.adaptive.playBias(pr, this);
+        return x;
       });
       const pi = this.weighted(w);
       return { formation: D.FORMATIONS[fi], play: plays[pi], flip: rnd.chance(0.5) };
     }
     pickDefense() {
-      const lead = this.score[1 - this.possession] - this.score[this.possession];
-      const late = this.half === 2 && this.clock < 90;
-      const dist = this.gainY() - this.los;
+      const S = this.situation();                                           // the offense's situation, read by the defense
+      const lead = -S.diff;                                                // + = the defense leads
+      const fastQB = (() => { const q = this.lineup(this.possession, 'off').find(p => p.pos === 'QB'); return q && q.ratings.spd >= 75; })();
       const w = D.FRONTS.map(f => {
+        let x = 1;
         switch (f.name) {
-          case 'COVER 1': return 1.2; case 'COVER 2': return 1.0; case 'COVER 3': return dist > 12 ? 1.2 : 0.8;
-          case 'ZERO BLITZ': return this.down >= 3 ? 1.3 : 0.5;
-          case 'PREVENT': return (late && lead > 0) || dist > 25 ? 0.9 : 0.12;
-          case 'QB SPY': return 0.6; case 'RED ZONE': return this.los >= 50 ? 1.6 : 0.1; case 'MAN UNDER': return 0.9;
+          case 'COVER 1': x = 1.2; break; case 'COVER 2': x = 1.0; break; case 'COVER 3': x = S.need > 8 ? 1.3 : 0.8; break;
+          case 'ZERO BLITZ': x = S.last || S.need <= 3 ? 1.4 : S.need > 9 ? 0.35 : 0.6; break;
+          case 'PREVENT': x = (S.late && lead > 0 && (S.dist > 15 || this.clock < 40)) || S.desperate ? 2.2 : S.dist > 25 ? 0.6 : 0.08; break;
+          case 'QB SPY': x = fastQB ? 1.3 : 0.4; break;
+          case 'RED ZONE': x = S.redZone ? (S.goalLine ? 2.2 : 1.6) : 0.08; break;
+          case 'MAN UNDER': x = S.need > 6 ? 1.1 : 0.8; break;
         }
-        return 1;
+        if (S.hurry && lead > 0 && f.name !== 'PREVENT') x *= (f.name === 'COVER 2' || f.name === 'COVER 3') ? 1.4 : 0.7;   // keep it in front of you
+        if (this.adaptive) x *= this.adaptive.frontBias(f, this);         // DYNAMIC: lean against the human's habits
+        return x;
       });
       const fi = this.weighted(w);
       const front = D.FRONTS[fi];
+      this.adaptHit = this.adaptive ? this.adaptive.frontBias(front, this) : 1;
       return { front, variant: front.variants[rnd.i(0, 2)] };
+    }
+    // the CPU uses its timeouts like a coach: to save time when it is behind late, or to set up a score before the half
+    cpuTimeout() {
+      if (this.practice || this.conversion || !this.clockRunning || this.ot) return;
+      const S = this.situation();
+      for (const team of [this.possession, 1 - this.possession]) {
+        if (this.humanTeam === team || this.timeouts[team] <= 0) continue;
+        const onOff = team === this.possession, trail = onOff ? S.diff < 0 || (S.diff === 0 && S.late) : S.diff > 0;
+        const want = (this.half === 2 && this.clock <= 120 && this.clock > 5 && trail && (onOff || S.diff <= 8)) || (onOff && this.half === 1 && this.clock <= 30 && S.toGoal <= 30);
+        if (want) { this.timeouts[team]--; this.clockRunning = false; this.runoff = 0; this.msg('TIMEOUT - ' + this.teams[team].name, 1.5); this.sfx.push('whistle'); return; }
+      }
+    }
+    // the try after a touchdown: the chart a coach carries (late), a coin flip weighted by style (early)
+    conversionChoice(team) {
+      const diff = this.score[team] - this.score[1 - team];
+      const late = (this.half === 2 && this.clock < 300) || this.ot;
+      if (late) { if ([-2, -1, 1, 5, -5, -9, -10].includes(diff)) return 2; if ([0, -7, 6, -6].includes(diff)) return 1; }
+      if (this.half === 2 && this.clock < 60 && diff < 0) return 2;
+      return rnd.chance(this.teams[team].style === 'pass' ? 0.35 : 0.22) ? 2 : 1;
     }
     weighted(ws) { const s = ws.reduce((a, b) => a + b, 0); let r = rnd.f() * s; for (let i = 0; i < ws.length; i++) { r -= ws[i]; if (r <= 0) return i; } return ws.length - 1; }
 
@@ -5708,7 +5898,7 @@ FF.Game = (function () {
         offPlayers: this.lineup(this.possession, 'off'), defPlayers: this.lineup(1 - this.possession, 'def'),
         los: this.los, gain: this.gainY(), down: this.down, play: off.play, formation: off.formation, flip: off.flip,
         front: def.front, variant: def.variant, humanSide: simSide, star: this.retroWatch ? null : star, difficulty: this.difficulty, settings: this.settings,
-        isConversion: !!this.conversion, stats: this.stats, quick: !!this.hurry, retro: this.retro,
+        isConversion: !!this.conversion, stats: this.stats, quick: !!this.hurry, retro: this.retro, adapt: this.adaptive ? this.adaptive.simHints(this) : null, clockMode: (() => { const S = this.situation(); return S.hurry ? 'hurry' : S.milk ? 'milk' : null; })(),
       });
       this.hurry = false;
       this.sim.playClockLeft = this.playClock;
@@ -5787,6 +5977,7 @@ FF.Game = (function () {
         this.penalize(pp.name, pp.against, pp.yards, true);
         this.call('prePenalty', r, ctx, { pp }); this.setState('result'); return;
       }
+      if (this.adaptive && !this.conversion) { const hs = this.humanSide(); if (hs === 'off') this.adaptive.recordOff(r); else if (hs === 'def' && s.front) this.adaptive.recordDef(s.front); }
       if (this.conversion) { this.resolveConversion(r); return; }
       ts.plays++;
       const applyYards = (spot) => {
@@ -6001,6 +6192,7 @@ FF.Game = (function () {
         case 'convFail': head = 'NO GOOD'; kind = 'inc'; det = 'THE ' + o.n + '-POINT TRY FAILS'; note = r.type === 'incomplete' ? pick(['THE PASS FALLS INCOMPLETE', 'THE DEFENSE STANDS TALL']) : pick(['STOPPED SHORT OF THE GOAL LINE', 'POINTS LEFT ON THE BOARD']); break;
         default: return null;
       }
+      if (this.adaptive && this.adaptHit > 1.2 && this.humanSide() === 'off' && (ev === 'inc' || ev === 'sack' || ev === 'int' || (ev === 'gain' && y <= 2)) && rnd.chance(0.6)) note = pick(['THEY HAVE SEEN THAT ONE BEFORE', 'THE DEFENSE IS LEARNING YOUR TENDENCIES', 'THEY WERE WAITING FOR IT']);
       return { lines: [head, det], kind, tag, note };
     }
     // Madden-style clock between plays: when the play ends in bounds with the clock running, a
@@ -6011,6 +6203,7 @@ FF.Game = (function () {
       this.runoff = 0;
       if (!this.clockRunning || this.practice) return;
       let ro = this.settings.runoff == null ? 15 : this.settings.runoff;
+      if (this.humanTeam !== this.possession && this.cpuSit && this.cpuSit.hurry && !this.conversion) ro = Math.min(ro, 5);   // the CPU's no-huddle
       ro = Math.min(ro, Math.max(0, this.clock - 4));
       if (this.fast) { this.clock = Math.max(0, this.clock - ro); return; }
       this.runoff = ro;
@@ -6105,7 +6298,7 @@ FF.Game = (function () {
         else if (input.pressed('RIGHT') || input.pressed('T2')) c.choice = 2;
       } else if (this.stateT > (this.fast ? 0 : 1.2)) {
         const diff = this.score[c.team] - this.score[1 - c.team];
-        c.choice = (diff < 0 && (-diff) % 7 >= 5) || (this.half === 2 && this.clock < 120 && diff <= 0) || rnd.chance(0.3) ? 2 : 1;
+        c.choice = this.conversionChoice(c.team);
       }
       if (c.choice) {
         this.los = c.choice === 1 ? 55 : 50; this.down = 1; this.target = 'goal';
@@ -6146,6 +6339,10 @@ FF.Game = (function () {
     finish() {
       this.setState('final'); this.sfx.push('buzzer');
       this.winner = this.score[0] > this.score[1] ? 0 : this.score[1] > this.score[0] ? 1 : null;
+      if (this.difficulty === 3 && this.humanTeam != null && !this.practice && this.mode !== 'demo' && this.mode !== 'training' && !this.fast && this.winner === this.humanTeam && !this.dynCounted) {
+        this.dynCounted = true; const before = FF.dynWins(); FF.settings.dynWins = Math.min(FF.DYN_MAX - 1, before + 1); FF.saveSettings && FF.saveSettings();
+        if (FF.dynWins() > before) this.msg('DYNAMIC DIFFICULTY: LEVEL ' + (FF.dynWins() + 1), 4);
+      }
       this.potg = this.playerOfGame();
     }
     playerOfGame() {
@@ -6164,11 +6361,65 @@ FF.Game = (function () {
       const id = this.star.info.id;
       const before = JSON.parse(this.starBefore || '{}'), after = this.stats[id] || {};
       const d = k => (after[k] || 0) - (before[k] || 0);
-      const mult = FF.career.DIFF_MULT[FF.clamp(this.difficulty | 0, 0, 2)];
+      const mult = FF.diffMult(this.difficulty);
       const items = FF.career.xpItems(d).map(([k, v]) => [k, Math.round(v * mult)]);
       const total = items.reduce((a, b) => a + b[1], 0);
       if (total !== 0) { this.starXP += total; this.xpLog.push({ items, total, t: 0 }); this.xpPopup = { total, t: 0 }; }
       this.starBefore = JSON.stringify(after);
+      if (this.sim && this.sim.result && !this.practice) { const g = this.gradeStarPlay(this.sim.result, d); if (g) { this.playGrades.push(g); this.gradePopup = Object.assign({ t: 0 }, g); } }
+    }
+    /* SUPERSTAR play grades: every snap the star is on the field gets a letter for how well he did his job - the
+       catch, the run, getting open on his route, his man in coverage, the pull, the throw. The game's grade point
+       average moves COACH TRUST between games, and trust decides his role. */
+    gradeStarPlay(r, d) {
+      const f = r.f || {}, me = f.star; if (!me) return null;
+      const L = ['F', 'D', 'C', 'C+', 'B', 'B+', 'A', 'A+'];
+      let g = 'C+', why = 'DID HIS JOB';
+      const step = n => { g = L[FF.clamp(L.indexOf(g) + n, 0, L.length - 1)]; };
+      const y = r.yards != null ? r.yards : 0;
+      const yds = (a, b, c2, dd) => y >= a ? 'A' : y >= b ? 'B+' : y >= c2 ? 'B' : y >= dd ? 'C+' : y >= 0 ? 'C' : 'D';
+      if (me.side === 'off') {
+        const isQB = me === f.qb;
+        if (isQB) {
+          if (r.type === 'passclock') { g = 'F'; why = 'HELD IT TOO LONG'; }
+          else if (r.intBy) { g = f.miss ? 'F' : 'D'; why = 'INTERCEPTED'; }
+          else if (r.type === 'sack' || (r.type === 'safety' && !r.thrown)) { g = (f.t || 0) > 3.5 ? 'F' : 'D'; why = (f.t || 0) > 3.5 ? 'HELD IT TOO LONG' : 'SACKED'; }
+          else if (r.type === 'incomplete') { if (!r.to) { g = f.pressured ? 'C+' : 'C'; why = 'THREW IT AWAY'; } else if (r.drop) { g = 'B'; why = 'ON TARGET - DROPPED'; } else if (r.deflected) { g = 'C'; why = 'BROKEN UP'; } else if (f.miss || r.offTarget) { g = 'D'; why = 'OFF TARGET'; } else { g = 'C'; why = 'INCOMPLETE'; } }
+          else if (r.thrown) { g = r.type === 'td' ? 'A+' : yds(15, 8, 4, 1); why = r.type === 'td' ? 'TOUCHDOWN PASS' : y >= 8 ? 'GREAT THROW' : 'COMPLETION'; if (f.pressured && r.type !== 'td') { step(1); why = 'THROW UNDER PRESSURE'; } }
+          else if (r.carrier === me) { g = r.type === 'td' ? 'A+' : yds(12, 7, 4, 1); why = r.type === 'td' ? 'TOUCHDOWN RUN' : y >= 4 ? 'MADE SOMETHING HAPPEN' : 'QB RUN'; }
+        } else {
+          const targeted = r.to === me;
+          const tr = f.starTrack, rr = tr && tr.route.length ? tr.hit / tr.route.length : 1;
+          if (targeted && r.intBy) { g = f.miss ? 'C+' : 'C'; why = f.miss ? 'BAD THROW - NOT ON HIM' : 'LOST THE BALL FIGHT'; }
+          else if (targeted && r.drop) { g = 'D'; why = 'DROPPED IT'; }
+          else if (r.carrier === me && r.thrown && !r.intBy) { g = r.type === 'td' ? 'A+' : yds(15, 8, 4, 1); why = r.type === 'td' ? 'TOUCHDOWN CATCH' : y >= 8 ? 'BIG CATCH' : 'CAUGHT IT'; if (r.catchDown || f.catchKind === 'one') { step(1); why = r.catchDown ? 'DIVING CATCH' : 'ONE-HANDED GRAB'; } if (f.broken > 0 && r.type !== 'td') { step(1); why = 'MADE A MAN MISS'; } }
+          else if (r.carrier === me && !r.thrown) { g = r.type === 'td' ? 'A+' : yds(10, 5, 2, 1); why = r.type === 'td' ? 'TOUCHDOWN RUN' : y >= 5 ? 'GOOD RUN' : y <= 0 ? 'STOPPED' : 'SHORT GAIN'; if (f.broken > 0 && r.type !== 'td') { step(1); why = 'BROKE A PULL'; } }
+          else if (targeted && r.type === 'incomplete') { const open = (f.starSep || 0) >= 2; g = r.deflected ? (open ? 'C+' : 'C') : open ? 'B' : 'C'; why = r.deflected ? 'BALL BROKEN UP' : open ? 'GOT OPEN - MISSED THROW' : 'COVERED'; }
+          else if (r.thrown) { const sp = f.starSep || 0; g = sp >= 3 ? 'B' : sp >= 1.8 ? 'C+' : 'C'; why = sp >= 3 ? 'GOT OPEN' : sp >= 1.8 ? 'RAN HIS ROUTE' : 'BLANKETED'; }
+          else { g = 'C+'; why = 'SOLD THE FAKE'; }
+          if (!r.carrier || r.carrier !== me) { if (rr < 0.4 && tr && tr.route.length >= 2) { step(-1); why = 'OFF HIS ROUTE'; } }
+        }
+      } else {
+        const tr = f.starTrack, A = tr && tr.assign;
+        if (d('ints') > 0) { g = 'A+'; why = 'INTERCEPTION'; }
+        else if (d('sacks') > 0) { g = 'A+'; why = 'SACK'; }
+        else if (d('defl') > 0) { g = 'A'; why = 'PASS BROKEN UP'; }
+        else if (d('pulls') > 0) { g = y <= 0 ? 'A' : y <= 4 ? 'B+' : 'B'; why = y <= 0 ? 'STOP AT THE LINE' : y <= 4 ? 'QUICK PULL' : 'MADE THE PULL'; }
+        else if (d('missedPulls') > 0) { g = 'D'; why = 'MISSED THE PULL'; }
+        else if (A && A.type === 'man' && A.target) {
+          const tgt = A.target;
+          if (r.to === tgt && (r.carrier === tgt)) { g = r.type === 'td' ? 'F' : y >= 10 ? 'D' : 'C'; why = r.type === 'td' ? 'HIS MAN SCORED' : y >= 10 ? 'BEATEN ON THE PLAY' : 'GAVE UP A CATCH'; }
+          else if (r.to === tgt) { g = 'B+'; why = 'BLANKETED HIS MAN'; }
+          else { g = (r.type === 'incomplete' || y <= 4) ? 'B' : 'C+'; why = 'TOOK HIS MAN AWAY'; }
+        } else {
+          if (r.type === 'td') { g = 'C'; why = 'SCORE AGAINST'; }
+          else if (r.type === 'incomplete' || y <= 4) { g = 'B'; why = A && A.type === 'rush' ? 'PRESSURE' : 'HELD HIS ZONE'; }
+          else if (y >= 15) { g = 'C'; why = 'BIG GAIN AGAINST'; }
+          else { g = 'C+'; why = 'IN POSITION'; }
+        }
+      }
+      const pts = { 'A+': 4.3, A: 4, 'B+': 3.3, B: 3, 'C+': 2.3, C: 2, D: 1, F: 0 }[g];
+      return { g, why, pts, side: me.side };
     }
 
     /* ---------------------------------------------------------- draw */
@@ -6207,6 +6458,7 @@ FF.Game = (function () {
       const msgs = this.messages.concat(s && this.state !== 'playcall' ? s.messages : []);
       for (const m of msgs) { const tw = FF.textWidth(m.text, { scale: 1 }); FF.rect(x, W / 2 - tw / 2 - 4, my - 2, tw + 8, 11, 'rgba(0,0,0,0.7)'); FF.text(x, m.text, W / 2, my, { scale: 1, color: '#ffe14a', outline: '#000', align: 'center', italic: true }); my += 12; }
       if (this.banner && this.state !== 'replay') FF.ui.drawBanner(x, this, this.banner, t);
+      if (this.gradePopup) { const p = this.gradePopup; p.t += 1 / 60; if (p.t > 2.6) this.gradePopup = null; else if (p.t > 0.35) { const col = p.g[0] === 'A' ? '#4ee04e' : p.g[0] === 'B' ? '#8cf38c' : p.g[0] === 'C' ? '#ffe14a' : '#ff6a5a'; const a = Math.min(1, (p.t - 0.35) * 5); x.globalAlpha = a; const bw = Math.max(70, FF.textWidth(p.why, { font: FONT3x5 }) + 14), bx = W - 4 - bw; FF.rect(x, bx, 96, bw, 31, 'rgba(0,0,0,0.72)'); FF.rect(x, bx, 96, 2, 31, col); FF.text(x, 'PLAY GRADE', bx + 7, 100, { font: FONT3x5, color: '#cfd8ff' }); FF.textFX(x, p.g, W - 9, 98, { scale: 2, gradient: [FF.tint(col, 0.5), col, FF.shade(col, 0.6)], outline: 1, shadow: 1, align: 'right', italic: true }); FF.text(x, p.why, bx + 7, 119, { font: FONT3x5, color: '#fff' }); x.globalAlpha = 1; } }
       if (this.xpPopup) { this.xpPopup.t += 1 / 60; const p = this.xpPopup; const yy = 150 - Math.min(1, p.t) * 20; FF.text(x, (p.total > 0 ? '+' : '') + p.total + ' XP', W - 8, yy, { color: p.total > 0 ? '#6cf36c' : '#f36c6c', outline: '#000', align: 'right', scale: 1 }); if (p.t > 2) this.xpPopup = null; }
       if (this.fadeIn > 0) { this.fadeIn -= 1 / 60; x.fillStyle = 'rgba(0,0,0,' + Math.max(0, this.fadeIn / 0.35).toFixed(2) + ')'; x.fillRect(0, 0, W, H); }
       if (this.intro && !this.paused) FF.ui.drawIntro(x, this, t);
@@ -6602,7 +6854,7 @@ FF.ui = (function () {
       let hint = null, sub = null;
       const c = s.controlled;
       if (s.audible) hint = FF.touch && FF.touch.active ? 'AUDIBLE: TAP A PLAY' : 'AUDIBLE: PRESS 1 / 2 / 3';
-      else if (pre) { if (s.humanSide === 'off') { if (s.star && c !== s.qb && c !== s.center) hint = 'WAITING FOR THE SNAP...'; else { hint = 'SPACE: SNAP'; sub = 'Q: AUDIBLE   V: PLAY ART   1-4 + ARROW: HOT ROUTE   HOLD E + L/R: MOTION   ESC: MENU'; } } else { const rusher = c && c.y >= s.los + 7 - 0.35; hint = rusher ? 'RUSHER: BEHIND THE DASHED LINE - YOU MAY RUSH' : 'COVERAGE: NO CROSSING THE LINE UNTIL THE BALL IS OUT'; sub = 'TAB: SWITCH   Q: AUDIBLE   V: PLAY ART   ESC: MENU'; } }
+      else if (pre) { if (s.humanSide === 'off') { if (s.star && c !== s.qb && c !== s.center) hint = 'WAITING FOR THE SNAP...'; else { hint = 'SPACE: SNAP'; sub = 'Q: AUDIBLE   V: PLAY ART   1-4 + ARROW: HOT ROUTE   E: MOTION   ESC: MENU'; } } else { const rusher = c && c.y >= s.los + 7 - 0.35; hint = rusher ? 'RUSHER: BEHIND THE DASHED LINE - YOU MAY RUSH' : 'COVERAGE: NO CROSSING THE LINE UNTIL THE BALL IS OUT'; sub = 'TAB: SWITCH   Q: AUDIBLE   V: PLAY ART   ESC: MENU'; } }
       else if (c && c.side === 'off') {
         if (c === s.qb && c.hasBall && !s.handedOff) {
           hint = FF.settings.passView === 'field' ? (FF.touch && FF.touch.active ? 'TAP A RECEIVER TO THROW   (TAP = LOB, HOLD = BULLET)' : 'THROW: PRESS THE NUMBER OVER A RECEIVER (TAP = LOB, HOLD = BULLET)') : 'THROW: 1 2 3 4   (TAP = LOB, HOLD = BULLET)';
@@ -6638,7 +6890,7 @@ FF.ui = (function () {
     else { const fronts = [D.FRONTS[0], D.FRONTS[2], D.FRONTS[3]]; items = fronts.map(f => ({ name: f.name, draw: (px, py) => drawDefDiagram(x, px, py + 8, TILE.w, TILE.h - 8, f, f.variants[1]), banner: '#3f9f3f', text: '#fff', cur: f === s.front })); }
     const y0 = 42, x0 = W / 2 - (3 * TILE.w + 2 * TILE.gap) / 2;
     FF.rect(x, x0 - 8, y0 - 12, 3 * TILE.w + 2 * TILE.gap + 16, TILE.h + 28, 'rgba(0,0,0,0.78)');
-    FF.text(x, 'AUDIBLE - ' + (FF.touch && FF.touch.active ? 'TAP A PLAY' : 'PRESS 1 / 2 / 3') + '   ' + Math.max(0, 3 - a.t).toFixed(1), W / 2, y0 - 9, { font: FONT3x5, color: '#ffe14a', align: 'center' });
+    FF.text(x, 'AUDIBLE - ' + (FF.touch && FF.touch.active ? 'TAP A PLAY' : 'PRESS 1 / 2 / 3') + '   ' + Math.max(0, (FF.touch && FF.touch.active ? 6 : 4) - a.t).toFixed(1), W / 2, y0 - 9, { font: FONT3x5, color: '#ffe14a', align: 'center' });
     items.forEach((it, i) => {
       const px = x0 + i * (TILE.w + TILE.gap);
       tile(x, px, y0, off ? 'off' : 'def', it.name, it.banner, it.text, false); it.draw(px, y0);
@@ -6776,7 +7028,7 @@ FF.ui = (function () {
     }
     // conditions
     const wx = FF.stadium.weather, md = FF.stadium.mood.name;
-    const cond = (md === 'night' ? 'NIGHT GAME' : md === 'dusk' ? 'LATE AFTERNOON' : 'AFTERNOON') + '   ' + (wx === 'rain' ? 'RAIN' : wx === 'snow' ? 'SNOW' : 'CLEAR') + '   ' + game.settings.halfMinutes + ' MINUTE HALVES' + (game.difficulty != null ? '   ' + ['ROOKIE', 'PRO', 'ALL-PRO'][FF.clamp(game.difficulty | 0, 0, 2)] : '');
+    const cond = (md === 'night' ? 'NIGHT GAME' : md === 'dusk' ? 'LATE AFTERNOON' : 'AFTERNOON') + '   ' + (wx === 'rain' ? 'RAIN' : wx === 'snow' ? 'SNOW' : 'CLEAR') + '   ' + game.settings.halfMinutes + ' MINUTE HALVES' + (game.difficulty != null ? '   ' + FF.diffName(game.difficulty) : '');
     FF.rect(x, 0, 186, W, 12, 'rgba(0,0,0,0.75)');
     FF.text(x, cond, W / 2, 189, { font: FONT3x5, color: '#cfd8ff', align: 'center' });
     if (s > 0.6 && Math.floor(t * 2) % 2 === 0) FF.text(x, FF.touch && FF.touch.active ? 'TAP TO CONTINUE' : 'PRESS ENTER', W / 2, H - 10, { font: FONT3x5, color: '#fff', align: 'center', outline: '#000' });
@@ -7178,7 +7430,7 @@ FF.touch = (function () {
           if (!s || !s.humanSide) return { name: 'watch', buttons: s && s.phase === 'presnap' ? ['MENU', 'ART', 'A'] : ['MENU', 'A'], labels: { A: 'SKIP' } };
           const c = s.controlled, pre = s.phase === 'presnap';
           if (s.audible) return { name: 'audible', buttons: ['MENU'] };
-          if (pre) return { name: 'pre-off', buttons: ['MENU', 'AUD', 'ART'], gesture: 'snapAim', ready: s.set && !g.intro && (s.t - s.setT) > 0.3 };
+          if (pre) return { name: 'pre-off', buttons: s.mayCall && !s.mayCall('off') ? ['MENU', 'ART'] : ['MENU', 'Bb', 'AUD', 'ART'], labels: { Bb: s.motion && s.motion.auto ? 'SET' : 'MOTION' }, gesture: 'snapAim', ready: s.set && !g.intro && (s.t - s.setT) > 0.3 };
           if (c && c.side === 'off') {
             if (c === s.qb && (c.hasBall || s.ball.state === 'snap') && !s.handedOff && !s.qbScramble) return { name: 'qb', buttons: ['MENU', 'Bb'], labels: { Bb: s.lobMode ? 'LOB' : 'BULLET' }, gesture: 'aim' };
             if (c.hasBall) return { name: 'carry', buttons: ['MENU', 'A', 'Bb'], labels: { A: 'BURST', Bb: 'STUTTER' }, gesture: 'steer' };
@@ -7190,8 +7442,8 @@ FF.touch = (function () {
         const c = s.controlled, pre = s.phase === 'presnap';
         if (s.audible) return { name: 'audible', buttons: ['MENU'], labels: {}, windows: false };
         if (pre) {
-          if (s.humanSide === 'off') return { name: 'pre-off', buttons: ['MENU', 'A', 'Bb', 'AUD', 'ART'], labels: { A: 'SNAP', Bb: 'MOTION' }, stick: true };
-          return { name: 'pre-def', buttons: ['MENU', 'SW', 'AUD', 'ART'], stick: true };
+          if (s.humanSide === 'off') return { name: 'pre-off', buttons: s.mayCall && !s.mayCall('off') ? ['MENU', 'A', 'ART'] : ['MENU', 'A', 'Bb', 'AUD', 'ART'], labels: { A: 'SNAP', Bb: s.motion && s.motion.auto ? 'SET' : 'MOTION' }, stick: true };
+          return { name: 'pre-def', buttons: s.star ? (s.mayCall('def') ? ['MENU', 'AUD', 'ART'] : ['MENU', 'ART']) : ['MENU', 'SW', 'AUD', 'ART'], stick: true };
         }
         if (c && c.side === 'off') {
           if (c === s.qb && c.hasBall && !s.handedOff) return FF.settings.passView === 'field' ? { name: 'qb', buttons: ['MENU', 'A', 'SPR'], labels: { A: 'RUN' }, stick: true, windows: true } : { name: 'qb', buttons: ['MENU', 'A', 'Bb', 'SPR'], labels: { A: 'RUN', Bb: 'WINDOWS' }, stick: true, windows: true };
@@ -7892,6 +8144,98 @@ FF.career = (function () {
 
 </script>
 <script>
+/* ---- src/legends.js ---- */
+/* legends.js — the end of a Superstar career: the legacy score, the Hall of Fame verdict, and the leaderboard.
+   The leaderboard is kept on this device (every retired career), and, when the game runs as the hosted claude.ai
+   page, also in a shared league-wide board that everyone who opens the page can read (each player writes only
+   his own row). Anywhere else (GitHub Pages, a downloaded file) the shared board is simply not there. */
+'use strict';
+
+FF.legends = (function () {
+  /* -------------------------------------------------- legacy score */
+  // Career XP is the backbone (it already carries the difficulty multiplier); awards, rings, milestones, longevity,
+  // peak level and the big counting stats are layered on top.
+  const AWARD_PTS = { 'LEAGUE MVP': 40, 'ALL-PRO': 20, 'PRO BOWL': 8, 'CHAMPIONSHIP RING': 35, 'COACH OF THE YEAR': 4 };
+  function legacy(c) {
+    const s = c.careerStats || {}; const parts = [];
+    const add = (label, v) => { v = Math.round(v); if (v) parts.push([label, v]); };
+    add('CAREER XP', (s.xp || 0) / 100);
+    const counts = {};
+    for (const a of c.awards || []) { const k = Object.keys(AWARD_PTS).find(n => a.name === n); if (k) counts[k] = (counts[k] || 0) + 1; }
+    for (const k in counts) add(k + (counts[k] > 1 ? ' X' + counts[k] : ''), AWARD_PTS[k] * counts[k]);
+    add('MILESTONES', Object.keys(c.milestones || {}).length * 3);
+    add('SEASONS', (c.history || []).length * 4);
+    add('GAMES', (c.totalGames || 0) * 0.5);
+    add('PEAK LEVEL', FF.career.levelOf(s.xp || 0).level * 5);
+    add('TOUCHDOWNS', (s.recTD || 0) + (s.rushTD || 0) + (s.passTD || 0) + (s.intTD || 0));
+    add('TAKEAWAYS & SACKS', (s.ints || 0) * 2 + (s.sacks || 0));
+    if (c.captainEver) add('TEAM CAPTAIN', 15);
+    const total = parts.reduce((a, b) => a + b[1], 0);
+    return { total, parts };
+  }
+  function verdict(score) {
+    if (score >= 300) return { name: 'FIRST-BALLOT HALL OF FAMER', hof: true, color: '#ffe14a' };
+    if (score >= 200) return { name: 'HALL OF FAMER', hof: true, color: '#ffd24a' };
+    if (score >= 120) return { name: 'FAN FAVORITE', hof: false, color: '#8cf38c' };
+    return { name: 'JOURNEYMAN', hof: false, color: '#cfd8ff' };
+  }
+  function entryOf(c) {
+    const L = legacy(c), V = verdict(L.total); const s = c.careerStats || {};
+    const teams = []; for (const t of c.teamsPlayed || [c.teamId]) if (!teams.includes(t)) teams.push(t);
+    return {
+      name: c.star.name, pos: c.star.pos, dpos: c.star.dpos, legacy: L.total, verdict: V.name, hof: V.hof,
+      seasons: (c.history || []).length, games: c.totalGames || 0, titles: (c.history || []).filter(h => h.champion).length,
+      mvps: (c.awards || []).filter(a => a.name === 'LEAGUE MVP').length, tds: (s.recTD || 0) + (s.rushTD || 0) + (s.passTD || 0),
+      teams, draft: c.draft ? (c.draft.overall ? 'R' + c.draft.round + ' #' + c.draft.overall : 'SIGNED') : 'SIGNED',
+      diff: FF.diffName(FF.settings.difficulty), when: Date.now(), id: (c.id || ('c' + Date.now())),
+    };
+  }
+
+  /* ---------------------------------------------------- local board */
+  const local = () => (FF.load('legends', []) || []).slice().sort((a, b) => b.legacy - a.legacy);
+  function saveLocal(e) { const all = FF.load('legends', []) || []; if (!all.some(x => x.id === e.id)) all.push(e); FF.save('legends', all.slice(-200)); }
+
+  /* --------------------------------------------------- shared board */
+  // One document per player (legends/<viewer id>) holding his best five careers; everyone reads all of them.
+  let dbP = null, userP = null;
+  function caps() {
+    if (!(window.claude && typeof window.claude.use === 'function')) return Promise.resolve(null);
+    if (!dbP) { dbP = window.claude.use('db').catch(() => null); userP = window.claude.use('user').catch(() => null); }
+    return Promise.all([dbP, userP]).then(([db, user]) => (db && user ? { db, user } : null));
+  }
+  const G = { status: 'off', rows: null, err: null };   // off | loading | ready | error
+  function clean(e) { return { name: String(e.name || '').slice(0, 14), pos: e.pos, dpos: e.dpos, legacy: Math.round(+e.legacy || 0), verdict: String(e.verdict || '').slice(0, 30), seasons: e.seasons | 0, titles: e.titles | 0, mvps: e.mvps | 0, tds: e.tds | 0, diff: String(e.diff || '').slice(0, 16), when: +e.when || 0, id: String(e.id || '').slice(0, 40) }; }
+  function submit(e) {
+    return caps().then(c => {
+      if (!c) return false;
+      return c.user.id().then(uid => {
+        if (!uid) return false;
+        const ref = c.db.doc('legends/' + uid);
+        return ref.get().then(snap => {
+          const cur = (snap.exists && snap.data() && Array.isArray(snap.data().entries)) ? snap.data().entries.slice() : [];
+          if (!cur.some(x => x.id === e.id)) cur.push(clean(e));
+          cur.sort((a, b) => b.legacy - a.legacy);
+          return ref.set({ entries: cur.slice(0, 5), updated: Date.now() }).then(() => true);
+        });
+      });
+    }).catch(err => { G.err = String(err && err.code || err); return false; });
+  }
+  function fetchGlobal() {
+    G.status = 'loading';
+    return caps().then(c => {
+      if (!c) { G.status = 'off'; return null; }
+      return c.db.collection('legends').get().then(q => {
+        const rows = []; for (const d of q.docs) { const v = d.data(); if (v && Array.isArray(v.entries)) for (const e of v.entries) rows.push(Object.assign(clean(e), { mine: false, owner: d.id })); }
+        return c.user.id().then(uid => { for (const r of rows) r.mine = r.owner === uid; rows.sort((a, b) => b.legacy - a.legacy); G.rows = rows.slice(0, 50); G.status = 'ready'; return G.rows; });
+      });
+    }).catch(err => { G.status = 'error'; G.err = String(err && err.code || err); return null; });
+  }
+  function retire(c) { const e = entryOf(c); saveLocal(e); submit(e).then(() => fetchGlobal()); return e; }
+  return { legacy, verdict, entryOf, local, saveLocal, submit, fetchGlobal, retire, global: G, available: () => !!(window.claude && window.claude.use) };
+})();
+
+</script>
+<script>
 /* ---- src/menus.js ---- */
 /* menus.js — title/attract mode, main menu, exhibition setup, Superstar mode
    (create, hub, upgrades, season), options, how-to-play. */
@@ -8020,20 +8364,21 @@ FF.career = (function () {
 
   /* --------------------------------------------------- main menu */
   S.mainmenu = {
-    items: ['EXHIBITION', 'SUPERSTAR MODE', 'FRANCHISE MODE', 'PRACTICE', 'PLAYBOOK', 'ROSTERS', 'OPTIONS', 'HOW TO PLAY'],
+    items: ['EXHIBITION', 'SUPERSTAR MODE', 'HALL OF FAME', 'FRANCHISE MODE', 'PRACTICE', 'PLAYBOOK', 'ROSTERS', 'OPTIONS', 'HOW TO PLAY'],
     enter() { this.sel = this.sel || 0; FF.audio.music('menu'); },
     update(dt, input) {
       this.sel = navUpDown(input, this.sel, this.items.length);
       if (confirm(input)) {
         FF.audio.play('select');
-        FF.go(['exhibition', 'superstar', 'franchise', 'practice', 'playEditor', 'rosters', 'options', 'howto'][this.sel]);
+        const sc = ['exhibition', 'superstar', 'hallOfFame', 'franchise', 'practice', 'playEditor', 'rosters', 'options', 'howto'][this.sel];
+        FF.go(sc, sc === 'hallOfFame' ? { from: 'menu' } : undefined);
       }
       if (back(input)) FF.go('title');
     },
     draw(x, t) {
       UI.bg(x); header(x, 'MAIN MENU');
-      menuList(x, this.items, this.sel, 110, 50, { step: 17, scale: 1 });
-      const desc = ['ONE GAME, ANY TWO TEAMS, YOU VS THE CPU.', 'CREATE A PLAYER AND LIVE A CAREER LOCKED TO HIM.', 'FANTASY DRAFT A TEAM, THEN COACH IT THROUGH SEASONS.', 'RUN ANY PLAY VS ANY COVERAGE, NO CLOCK.', 'EDIT ROUTES, READS AND RUNS; BUILD YOUR OWN PLAYS.', 'RENAME, RENUMBER AND RESTYLE THE PLAYERS ON ANY TEAM.', 'GAME LENGTH, RULES, DIFFICULTY, DISPLAY.', 'CONTROLS AND THE RULES OF 5-ON-5 FLAG.'][this.sel];
+      menuList(x, this.items, this.sel, 110, 46, { step: 16, scale: 1 });
+      const desc = ['ONE GAME, ANY TWO TEAMS, YOU VS THE CPU.', 'CREATE A PLAYER AND LIVE A CAREER LOCKED TO HIM.', 'RETIRED SUPERSTARS RANKED BY LEGACY SCORE.', 'FANTASY DRAFT A TEAM, THEN COACH IT THROUGH SEASONS.', 'RUN ANY PLAY VS ANY COVERAGE, NO CLOCK.', 'EDIT ROUTES, READS AND RUNS; BUILD YOUR OWN PLAYS.', 'RENAME, RENUMBER AND RESTYLE THE PLAYERS ON ANY TEAM.', 'GAME LENGTH, RULES, DIFFICULTY, DISPLAY.', 'CONTROLS AND THE RULES OF 5-ON-5 FLAG.'][this.sel];
       footer(x, desc);
       FF.text(x, FF.touch && FF.touch.active ? 'TAP AN ITEM TO OPEN IT' : 'ARROWS: MOVE   ENTER: SELECT   ESC: BACK', W / 2, H - 16, { font: FONT3x5, color: '#aaa', align: 'center' });
     },
@@ -8056,7 +8401,7 @@ FF.career = (function () {
         if (lr) {
           FF.audio.play('tick');
           if (this.row === 0) this.human = 1 - this.human;
-          if (this.row === 1) this.diff = FF.clamp(this.diff + lr, 0, 2);
+          if (this.row === 1) this.diff = FF.clamp(this.diff + lr, 0, 3);
           if (this.row === 2) { const opts = [2, 4, 6, 10]; let i = opts.indexOf(FF.settings.halfMinutes); i = FF.clamp(i + lr, 0, 3); FF.settings.halfMinutes = opts[i]; FF.saveSettings(); }
         }
         if (confirm(input)) {
@@ -8090,7 +8435,7 @@ FF.career = (function () {
       } else {
         teamCard(x, D.TEAMS[this.sel[0]], 10, 34, 145); teamCard(x, D.TEAMS[this.sel[1]], 165, 34, 145);
         FF.text(x, 'VS', W / 2, 70, { scale: 2, color: '#ffe14a', outline: '#000', align: 'center' });
-        const rows = [['YOU PLAY AS', D.TEAMS[this.sel[this.human]].name + (this.human === 0 ? ' (HOME)' : ' (AWAY)')], ['DIFFICULTY', ['ROOKIE', 'PRO', 'ALL-PRO'][this.diff]], ['HALF LENGTH', FF.settings.halfMinutes + ' MIN']];
+        const rows = [['YOU PLAY AS', D.TEAMS[this.sel[this.human]].name + (this.human === 0 ? ' (HOME)' : ' (AWAY)')], ['DIFFICULTY', FF.diffName(this.diff)], ['HALF LENGTH', FF.settings.halfMinutes + ' MIN']];
         rows.forEach(([k, v], i) => {
           const y = 138 + i * 14; const on = this.row === i; FF.text(x, k, 70, y, { color: on ? '#ffe14a' : '#fff', outline: '#000' }); FF.text(x, '< ' + v + ' >', 250, y, { color: on ? '#ffe14a' : '#fff', outline: '#000', align: 'center' });
           const nav = FF.navSeq(this.row, i, 'v', rows.length, true);
@@ -8218,7 +8563,8 @@ FF.career = (function () {
         ['READ AIDS (RINGS, TAGS)', s.readAids === false ? 'OFF' : 'ON', () => { s.readAids = s.readAids === false; }, 'classic'],
         ['THROW AIM', { low: 'LOW SENSITIVITY', medium: 'MEDIUM', high: 'HIGH SENSITIVITY' }[s.aimSens] || 'MEDIUM', v => { const o = ['low', 'medium', 'high']; s.aimSens = o[FF.clamp(o.indexOf(s.aimSens || 'medium') + v, 0, 2)]; }, 'retro'],
         ['HALF LENGTH', s.halfMinutes + ' MIN', v => { const o = [2, 4, 6, 10]; s.halfMinutes = o[FF.clamp(o.indexOf(s.halfMinutes) + v, 0, 3)]; }],
-        ['DIFFICULTY', ['ROOKIE', 'PRO', 'ALL-PRO'][s.difficulty], v => { s.difficulty = FF.clamp(s.difficulty + v, 0, 2); }],
+        ['DIFFICULTY', FF.diffName(s.difficulty), v => { s.difficulty = FF.clamp(s.difficulty + v, 0, 3); }],
+        ...(s.difficulty === 3 ? [['DYNAMIC LEVEL', String(FF.dynWins() + 1) + ' / ' + FF.DYN_MAX, v => { s.dynWins = FF.clamp(FF.dynWins() + v, 0, FF.DYN_MAX - 1); }]] : []),
         ['DOWNS TO CROSS MIDFIELD', String(s.downsToCross), v => { s.downsToCross = FF.clamp(s.downsToCross + v, 3, 4); }],
         ['DOWNS TO SCORE', String(s.downsToScore), v => { s.downsToScore = FF.clamp(s.downsToScore + v, 3, 4); }],
         ['TIMEOUTS PER HALF', String(s.timeouts), v => { s.timeouts = FF.clamp(s.timeouts + v, 1, 2); }],
@@ -8299,7 +8645,7 @@ FF.career = (function () {
       ]],
       ['OFFENSE', [
         'PRE-SNAP: SPACE SNAPS. Q CALLS AN AUDIBLE (THEN 1/2/3).',
-        'HOLD E + LEFT/RIGHT SENDS RECEIVER 1 IN MOTION.',
+        'E SENDS RECEIVER 1 IN MOTION (E AGAIN: HE SETS). HOLD E + LEFT/RIGHT TO WALK HIM.',
         'QB: THE PASSING WINDOWS OPEN BY THEMSELVES AFTER THE SNAP.',
         'PRESS THE NUMBER ON A WINDOW TO THROW TO THAT RECEIVER:',
         'TAP = LOB, HOLD = BULLET. HOLD AN ARROW TO LEAD HIM.',
@@ -8405,7 +8751,7 @@ FF.career = (function () {
       ],
       'OFFENSE': [
         'PRE-SNAP: SNAP. AUD CALLS AN AUDIBLE (TAP ONE OF THREE).',
-        'HOLD MOTION + THE STICK SENDS RECEIVER 1 IN MOTION.',
+        'TAP MOTION: RECEIVER 1 RUNS ACROSS - SNAP WHILE HE MOVES.',
         'QB: THE PASSING WINDOWS OPEN AFTER THE SNAP (OR, WITH',
         'PASSING > TAP RECEIVER, BADGES SHOW OVER EACH RECEIVER).',
         'THE TAG IS THE READ: OPEN, LOB IT (MAN UNDERNEATH), BULLET',
@@ -8612,16 +8958,124 @@ FF.career = (function () {
     if (!c.goals) c.goals = C.seasonGoals(c.star, FF.settings.halfMinutes);
     if (c.careerStats.xp == null) c.careerStats.xp = c.xp || 0;
     if (!c.contract) c.contract = { seasons: 2, signed: c.season };
+    if (c.trust == null) c.trust = 50; if (c.star.age == null) c.star.age = 22; if (!c.teamsPlayed) c.teamsPlayed = [c.teamId]; if (!c.id) c.id = 'c' + Date.now().toString(36);
     return c;
   }
   const CAPTAIN_LEVEL = 5, TRAIN_CAP = 40, TRAIN_PLAYS = 6;
-  FF.trainCap = diff => Math.round(TRAIN_CAP * C.DIFF_MULT[FF.clamp(diff | 0, 0, 2)]);   // the weekly camp XP cap (camp ends when it is reached)
-  function isCaptain(c) { return levelOf(c).level >= CAPTAIN_LEVEL; }
+  FF.trainCap = diff => Math.round(TRAIN_CAP * FF.diffMult(diff));   // the weekly camp XP cap (camp ends when it is reached)
+  // the captain is voted by the locker room: an established player the coach trusts, or a franchise player early
+  function isCaptain(c) { const lv = levelOf(c).level, tr = c.trust == null ? 50 : c.trust; return (lv >= CAPTAIN_LEVEL && tr >= 55) || (lv >= 3 && tr >= 80); }
+  // COACH TRUST (0-100) sets the star's role: how often the quarterback looks for him, and what he may change at the line
+  const ROLES = [
+    { min: 0, name: 'ROTATION', desc: 'FEWER LOOKS - EARN THEM WITH GOOD GRADES' },
+    { min: 35, name: 'STARTER', desc: 'A NORMAL SHARE OF THE OFFENSE' },
+    { min: 60, name: 'FEATURED', desc: 'MORE TARGETS - A QB MAY AUDIBLE' },
+    { min: 80, name: 'FRANCHISE', desc: 'THE OFFENSE RUNS THROUGH YOU - CALL THE DEFENSE TOO' },
+  ];
+  function roleOf(t) { let r = ROLES[0]; for (const x of ROLES) if ((t == null ? 50 : t) >= x.min) r = x; return r; }
+  FF.starRole = roleOf;
+  function starInfoOf(c) { return Object.assign({}, c.star, { ratings: Object.assign({}, c.star.ratings), style: Object.assign({}, c.star.style), captain: isCaptain(c), trust: c.trust }); }
+  // a year older: the young hold their ratings (XP grows them), the thirties take the legs first
+  function ageStar(c) {
+    const st = c.star; st.age = (st.age || 22) + 1; const lost = {};
+    const drop = (k, n) => { const v = st.ratings[k]; const nv = Math.max(30, v - n); if (nv < v) { st.ratings[k] = nv; lost[k] = (lost[k] || 0) + (v - nv); } };
+    const a = st.age;
+    if (a >= 29 && a <= 30) { if (rnd.chance(0.5)) drop('spd', 1); }
+    else if (a >= 31 && a <= 33) { drop('spd', 1); drop('agi', 1); if (rnd.chance(0.5)) drop('sta', 1); }
+    else if (a >= 34) { drop('spd', 2); drop('agi', 2); drop('sta', 1); const o = D.RK.filter(k => !['spd', 'agi', 'sta'].includes(k)); drop(rnd.pick(o), 1); }
+    const txt = Object.keys(lost).map(k => '-' + lost[k] + ' ' + D.RNAMES[k]).join(', ');
+    c.offseasonNote = 'AGE ' + a + (txt ? ': ' + txt : ': NO DECLINE');
+  }
+  const RETIRE_FORCED = 38;
+  function canRetire(c) { return C.seasonOver(c) && c.seasonClosed && (c.history || []).length >= 2; }
   function trainKey(c) { return c.season + ':' + c.week + ':' + (c.playoffs ? c.playoffs.round : 'R'); }
   function contractLeft(c) { return c.contract.signed + c.contract.seasons - 1 - c.season; }   // seasons remaining after the current one
   function levelOf(c) { return C.levelOf(c.careerStats.xp || 0); }
   function styleLocks(c) { const lv = c ? levelOf(c).level : 1; return (key, idx) => { const need = C.unlockLevel(key, idx); return need > lv ? need : 0; }; }
   function goalDone(goal, stats) { return C.goalValue(goal.key, stats) >= goal.target; }
+
+  function newCareer(star, teamId, o) {
+    const career = { id: 'c' + Date.now().toString(36), star, teamId, season: 0, xp: 0, careerStats: { xp: 0 }, seasonStats: {}, totalGames: 0, milestones: {}, awards: [], history: [], seasonXP: 0, trust: o.trust, teamsPlayed: [teamId], draft: o.draft || null };
+    C.startSeason(career); career.goals = C.seasonGoals(star, FF.settings.halfMinutes); career.contract = { seasons: o.contract, signed: 1 };
+    if (o.bonus) { career.xp += o.bonus; career.careerStats.xp += o.bonus; }
+    if (o.award) career.awards.push({ name: o.award, season: 1, xp: o.bonus || 0 });
+    FF.saveCareer(career); return career;
+  }
+
+  /* ------------------------------------------------------- the draft
+     Thirty-one rookies and you, sixteen teams, two rounds, worst team picks first. Teams take the best player
+     on their board (overall, a scouting guess, a nudge for need); your stock is your OVR plus a little buzz.
+     Watch every pick, jump to your pick, or simulate the whole thing. */
+  S.starDraft = {
+    enter(args) {
+      this.star = args.star; this.t = 0;
+      const pool = C.rookieClass(31, 1).map(p => ({ p, v: D.ovr(p) + rnd.r(-4, 4) }));
+      pool.push({ p: this.star, v: D.ovr(this.star) + rnd.r(-2, 5), star: true });
+      this.pool = pool;
+      const order = D.TEAMS.slice().sort((a, b) => D.strength(a.roster) - D.strength(b.roster)).map(t => t.id);
+      this.order = order.concat(order); this.picks = []; this.mine = null; this.sel = 0; this.auto = null; this.autoT = 0;
+      FF.audio.music('menu');
+    },
+    pickOne() {
+      const i = this.picks.length; if (i >= this.order.length) return;
+      const team = D.teamById(this.order[i]);
+      const need = pos => team.roster.filter(q => q.pos === pos).length <= 1 ? 3 : 0;
+      let best = null, bv = -1e9;
+      for (const c of this.pool) { if (c.taken) continue; const v = c.v + need(c.p.pos) + rnd.r(0, 2); if (v > bv) { bv = v; best = c; } }
+      best.taken = true; this.picks.push({ team: team.id, c: best, round: i < 16 ? 1 : 2, pick: (i % 16) + 1, overall: i + 1 });
+      if (best.star) { this.mine = this.picks[this.picks.length - 1]; this.auto = null; FF.audio.play('td'); } else FF.audio.play('tick');
+    },
+    finish() {
+      while (this.picks.length < this.order.length) this.pickOne();
+      const m = this.mine; const top5 = m.overall <= 5;
+      const bonus = m.round === 1 ? Math.max(80, 260 - (m.overall - 1) * 12) : 60;
+      newCareer(this.star, m.team, { trust: top5 ? 55 : m.round === 1 ? 50 : 42, contract: m.round === 1 ? 3 : 2, bonus, award: 'DRAFTED ' + (m.round === 1 ? 'ROUND 1' : 'ROUND 2') + ', #' + m.overall + ' OVERALL - ' + D.teamById(m.team).name, draft: { round: m.round, pick: m.pick, overall: m.overall, team: m.team } });
+      FF.go('superstar');
+    },
+    update(dt, input) {
+      this.t += dt;
+      if (this.mine) { if (confirm(input) || input.pressed('A')) { FF.audio.play('select'); this.finish(); } return; }
+      const items = ['NEXT PICK', 'SIM TO MY PICK', 'SIM THE WHOLE DRAFT'];
+      this.sel = navUpDown(input, this.sel, items.length);
+      if (this.auto) { this.autoT -= dt; if (this.autoT <= 0) { this.pickOne(); this.autoT = this.auto === 'fast' ? 0 : 0.18; } if (input.pressed('BACK')) this.auto = null; return; }
+      if (confirm(input)) {
+        if (this.sel === 0) this.pickOne();
+        else if (this.sel === 1) { this.auto = 'show'; this.autoT = 0; }
+        else { while (!this.mine && this.picks.length < this.order.length) this.pickOne(); }
+      }
+      if (input.pressed('R')) { while (!this.mine && this.picks.length < this.order.length) this.pickOne(); }
+    },
+    draw(x, t) {
+      UI.bg(x); header(x, 'THE DRAFT');
+      const i = this.picks.length; const onClock = i < this.order.length ? D.teamById(this.order[i]) : null;
+      FF.text(x, this.mine ? 'YOU HAVE BEEN DRAFTED!' : 'ROUND ' + (i < 16 ? 1 : 2) + ', PICK ' + ((i % 16) + 1) + ' - ON THE CLOCK: ' + (onClock ? onClock.city + ' ' + onClock.name : ''), W / 2, 31, { font: FONT3x5, color: '#ffe14a', align: 'center' });
+      // the board: last ten picks
+      const shown = this.picks.slice(-10);
+      shown.forEach((pk, j) => { const y = 42 + j * 12; const tm = D.teamById(pk.team); const me = pk.c.star;
+        FF.rect(x, 8, y - 2, 200, 11, me ? 'rgba(255,225,74,0.25)' : 'rgba(0,0,0,0.35)');
+        FF.text(x, String(pk.overall).padStart(2, ' ') + '. ' + tm.name, 12, y, { font: FONT3x5, color: me ? '#ffe14a' : '#fff' });
+        FF.text(x, pk.c.p.name + ' ' + pk.c.p.pos + ' ' + D.ovr(pk.c.p), 90, y, { font: FONT3x5, color: me ? '#ffe14a' : '#ddd' }); });
+      // your card
+      const st = this.star; FF.rect(x, 216, 40, 98, 74, '#000'); FF.panel(x, 217, 41, 96, 72, '#2a2a3a', '#5a5a7a', '#101018');
+      FF.text(x, st.name, 265, 46, { font: FONT3x5, color: '#ffe14a', align: 'center' }); FF.text(x, st.pos + ' / ' + st.dpos + '   OVR ' + D.ovr(st), 265, 56, { font: FONT3x5, color: '#fff', align: 'center' });
+      const left = this.pool.filter(c => !c.taken).length; const better = this.pool.filter(c => !c.taken && !c.star && c.v > this.pool.find(q => q.star).v).length;
+      if (!this.mine) { FF.text(x, left + ' PLAYERS LEFT', 265, 70, { font: FONT3x5, color: '#ddd', align: 'center' }); FF.text(x, better + ' RATED AHEAD OF YOU', 265, 80, { font: FONT3x5, color: '#aaa', align: 'center' }); }
+      else { const m = this.mine; const tm = D.teamById(m.team); x.drawImage(FF.sprites.logo(tm, 2), 249, 66); FF.text(x, 'ROUND ' + m.round + ', #' + m.overall, 265, 100, { font: FONT3x5, color: '#8cf38c', align: 'center' }); }
+      if (this.mine) {
+        const m = this.mine; const tm = D.teamById(m.team); const on = Math.floor(t * 3) % 2 === 0;
+        FF.rect(x, 8, 168, 304, 34, '#000'); FF.panel(x, 9, 169, 302, 32, '#3a3010', '#8a7a30', '#100c00');
+        FF.text(x, 'THE ' + tm.city + ' ' + tm.name + ' SELECT ' + st.name + '!', W / 2, 174, { color: on ? '#ffe14a' : '#fff', outline: '#000', align: 'center' });
+        const bonus = m.round === 1 ? Math.max(80, 260 - (m.overall - 1) * 12) : 60;
+        FF.text(x, (m.round === 1 ? '3' : '2') + '-YEAR ROOKIE DEAL   SIGNING BONUS +' + bonus + ' XP   COACH TRUST ' + (m.overall <= 5 ? 55 : m.round === 1 ? 50 : 42), W / 2, 189, { font: FONT3x5, color: '#ddd', align: 'center' });
+        FF.tapZone(8, 168, 304, 34, ['START'], 'CONTINUE');
+        footer(x, FF.touch && FF.touch.active ? 'TAP TO CONTINUE' : 'ENTER: CONTINUE');
+        return;
+      }
+      if (this.auto) FF.text(x, 'SIMULATING TO YOUR PICK...', 265, 130, { font: FONT3x5, color: '#ffe14a', align: 'center' });
+      menuList(x, ['NEXT PICK', 'SIM TO MY PICK', 'SIM THE WHOLE DRAFT'], this.sel, 222, 132, { step: 13 });
+      footer(x, FF.touch && FF.touch.active ? 'TAP A CHOICE' : 'ENTER: CHOOSE   R: SKIP TO MY PICK');
+    },
+  };
 
   /* ------------------------------------------------------- the hub */
   S.superstar = {
@@ -8633,15 +9087,22 @@ FF.career = (function () {
     },
     items() {
       const c = this.career; const items = [];
-      items.push(C.seasonOver(c) ? 'START NEXT SEASON' : 'PLAY NEXT GAME');
+      const forced = C.seasonOver(c) && (c.star.age || 22) >= RETIRE_FORCED;
+      items.push(C.seasonOver(c) ? (forced ? 'RETIRE - HANG THEM UP' : 'START NEXT SEASON') : 'PLAY NEXT GAME');
       if (!C.seasonOver(c)) items.push(c.trained === trainKey(c) ? 'TRAINING CAMP (DONE)' : 'TRAINING CAMP');
-      items.push('UPGRADE RATINGS', 'EDIT LOOK & STYLE', 'STANDINGS & GOALS', 'TROPHY CASE', 'CAREER STATS', 'DELETE CAREER', 'BACK');
+      else if (canRetire(c) && !forced) items.push('RETIRE');
+      items.push('UPGRADE RATINGS', 'EDIT LOOK & STYLE', 'STANDINGS & GOALS', 'TROPHY CASE', 'CAREER STATS', 'HALL OF FAME', 'DELETE CAREER', 'BACK');
       return items;
     },
     nextOpp() { const id = C.nextOpponent(this.career); return id ? D.teamById(id) : null; },
     update(dt, input) {
       if (!this.career) return;
       const items = this.items();
+      if (this.confirmRetire) {
+        if (input.pressed('BACK') || input.pressed('START') || input.pressed('A')) this.confirmRetire = false;
+        if (input.pressed('YES')) { this.confirmRetire = false; FF.go('starRetire'); }
+        return;
+      }
       if (this.confirmDelete) {
         if (input.pressed('A') || input.pressed('START') || input.pressed('BACK')) this.confirmDelete = false;
         if (input.pressed('YES')) { localStorage.removeItem('ff94_career'); this.career = null; FF.go('starCreate'); }
@@ -8653,17 +9114,19 @@ FF.career = (function () {
         if (it === 'PLAY NEXT GAME') {
           const opp = this.nextOpp(); const team = D.teamById(c.teamId);
           const home = rnd.chance(0.5);
-          const starInfo = Object.assign({}, c.star, { ratings: Object.assign({}, c.star.ratings), style: Object.assign({}, c.star.style), captain: isCaptain(c) });
+          const starInfo = starInfoOf(c);
           FF.go('game', { teams: home ? [team, opp] : [opp, team], humanTeam: home ? 0 : 1, difficulty: FF.settings.difficulty, mode: 'superstar', star: { teamIdx: home ? 0 : 1, info: starInfo }, career: c, weekLabel: c.playoffs ? String(c.playoffs.round) : 'WEEK ' + (c.week + 1) });
         } else if (it === 'TRAINING CAMP') {
           // six plays against a coverage the CPU picks, up to TRAIN_CAP XP (camp ends early once it is reached), once a week
           const team = D.teamById(c.teamId); const opp = D.teamById(this.nextOpp() ? this.nextOpp().id : D.TEAMS[(D.TEAMS.indexOf(team) + 1) % 16].id);
-          const starInfo = Object.assign({}, c.star, { ratings: Object.assign({}, c.star.ratings), style: Object.assign({}, c.star.style), captain: isCaptain(c) });
+          const starInfo = starInfoOf(c);
           FF.go('game', { teams: [team, opp], humanTeam: 0, difficulty: FF.settings.difficulty, mode: 'training', star: { teamIdx: 0, info: starInfo }, career: c });
         } else if (it === 'TRAINING CAMP (DONE)') FF.audio.play('buzz');
         else if (it === 'START NEXT SEASON') {
-          C.startSeason(c); c.goals = C.seasonGoals(c.star, FF.settings.halfMinutes); c.seasonClosed = false; c.seasonXP = 0; c.seasonPlayXP = 0; FF.saveCareer(c);
-        } else if (it.startsWith('UPGRADE')) FF.go('starUpgrade');
+          C.startSeason(c); ageStar(c); c.goals = C.seasonGoals(c.star, FF.settings.halfMinutes); c.seasonClosed = false; c.seasonXP = 0; c.seasonPlayXP = 0; FF.saveCareer(c);
+        } else if (it === 'RETIRE' || it === 'RETIRE - HANG THEM UP') { this.confirmRetire = true; }
+        else if (it === 'HALL OF FAME') FF.go('hallOfFame', { from: 'superstar' });
+        else if (it.startsWith('UPGRADE')) FF.go('starUpgrade');
         else if (it === 'EDIT LOOK & STYLE') FF.go('starStyle');
         else if (it === 'STANDINGS & GOALS') FF.go('season');
         else if (it === 'TROPHY CASE') FF.go('trophies');
@@ -8690,6 +9153,7 @@ FF.career = (function () {
       FF.text(x, 'OVR ' + D.ovr(s), 155, 65, { font: FONT3x5, color: '#8cf38c', align: 'right' });
       FF.rect(x, 52, 73, 104, 4, '#222'); FF.rect(x, 52, 73, Math.round(104 * lv.progress), 4, '#4ee04e');
       FF.text(x, lv.next ? (lv.next.xp - (c.careerStats.xp || 0)) + ' XP TO ' + lv.next.title : 'MAX LEVEL', 52, 79, { font: FONT3x5, color: '#aaa' });
+      { const ro = roleOf(c.trust); FF.text(x, 'AGE ' + (s.age || 22) + '  TRUST ' + Math.round(c.trust), 52, 86, { font: FONT3x5, color: '#cfd8ff' }); FF.text(x, ro.name, 155, 86, { font: FONT3x5, color: ro.min >= 60 ? '#8cf38c' : ro.min >= 35 ? '#ffe14a' : '#ff9a6a', align: 'right' }); }
       const rec = C.userRecord(c);
       FF.text(x, 'SEASON ' + c.season + '   ' + rec[0] + '-' + rec[1] + '   BANK ' + c.xp + ' XP', 14, 94, { font: FONT3x5, color: '#fff' });
       const opp = this.nextOpp(); let line = '';
@@ -8714,10 +9178,13 @@ FF.career = (function () {
       const last = c.results[c.results.length - 1];
       if (last) FF.text(x, 'LAST: ' + (last.win ? 'W ' : 'L ') + last.us + '-' + last.them + ' VS ' + D.teamById(last.opp).name, 176, 153, { font: FONT3x5, color: last.win ? '#8cf38c' : '#ff9a9a' });
       const nm = Object.keys(c.milestones).length;
-      FF.text(x, nm + ' MILESTONES  ' + c.awards.length + ' AWARDS   ' + ['ROOKIE', 'PRO', 'ALL-PRO'][FF.settings.difficulty] + ' X' + C.DIFF_MULT[FF.settings.difficulty].toFixed(2), 176, 162, { font: FONT3x5, color: '#aaa' });
+      FF.text(x, nm + ' MILESTONES  ' + c.awards.length + ' AWARDS   ' + FF.diffName(FF.settings.difficulty) + ' X' + FF.diffMult(FF.settings.difficulty).toFixed(2), 176, 162, { font: FONT3x5, color: '#aaa' });
       const left = contractLeft(c);
       FF.text(x, 'CONTRACT: ' + (left <= 0 ? 'FINAL SEASON - OFFERS AT SEASON END' : left + ' MORE SEASON' + (left > 1 ? 'S' : '') + ' AFTER THIS'), 176, 172, { font: FONT3x5, color: left <= 0 ? '#ffe14a' : '#aaa' });
-      FF.text(x, isCaptain(c) ? 'TEAM CAPTAIN: TEAMMATES +2 ALL RATINGS' : 'CAPTAINCY AT LEVEL ' + CAPTAIN_LEVEL + ' (+2 TO TEAMMATES)', 176, 182, { font: FONT3x5, color: isCaptain(c) ? '#8cf38c' : '#777' });
+      FF.text(x, isCaptain(c) ? 'TEAM CAPTAIN: TEAMMATES +2 ALL RATINGS' : 'CAPTAIN AT LVL ' + CAPTAIN_LEVEL + ' + TRUST 55', 176, 182, { font: FONT3x5, color: isCaptain(c) ? '#8cf38c' : '#777' });
+      FF.text(x, 'ROLE: ' + roleOf(c.trust).desc, 176, 191, { font: FONT3x5, color: '#aaa' });
+      if (c.offseasonNote && c.week === 0 && !c.results.length) FF.text(x, 'OFFSEASON - ' + c.offseasonNote, 176, 200, { font: FONT3x5, color: '#ff9a6a' });
+      if (this.confirmRetire) { const L = FF.legends.legacy(c); FF.rect(x, 40, 84, 240, 52, '#000'); FF.panel(x, 42, 86, 236, 48, '#3a3010', '#8a7a30', '#100c00'); FF.text(x, 'RETIRE ' + c.star.name + '?', W / 2, 91, { color: '#ffe14a', align: 'center' }); FF.text(x, 'LEGACY SO FAR: ' + L.total + ' - ' + FF.legends.verdict(L.total).name, W / 2, 104, { font: FONT3x5, color: '#fff', align: 'center' }); const touch = FF.touch && FF.touch.active; FF.text(x, touch ? 'TAP LEFT: RETIRE      TAP RIGHT: KEEP PLAYING' : 'PRESS Y TO RETIRE   ENTER TO KEEP PLAYING', W / 2, 120, { font: FONT3x5, color: '#ffe0a0', align: 'center' }); FF.tapZone(42, 86, 118, 48, ['YES'], 'RETIRE'); FF.tapZone(160, 86, 118, 48, ['START'], 'CANCEL'); }
       if (this.confirmDelete) { FF.rect(x, 40, 90, 240, 40, '#000'); FF.panel(x, 42, 92, 236, 36, '#5a1a1a', '#a04040', '#200808'); FF.text(x, 'DELETE THIS CAREER?', W / 2, 98, { color: '#fff', align: 'center' }); const touch = FF.touch && FF.touch.active; FF.text(x, touch ? 'TAP LEFT: DELETE      TAP RIGHT: CANCEL' : 'PRESS Y TO DELETE   ENTER TO CANCEL', W / 2, 112, { font: FONT3x5, color: '#ffb0b0', align: 'center' }); FF.tapZone(42, 92, 118, 36, ['YES'], 'DELETE'); FF.tapZone(160, 92, 118, 36, ['START'], 'CANCEL'); }
       footer(x, 'ENTER: SELECT   ESC: BACK');
     },
@@ -8731,6 +9198,7 @@ FF.career = (function () {
       this.ratings = null; this.pool = CREATE_POINTS; FF.audio.music('menu');
       this.look = new FF.look.LookEditor(D.TEAMS[0], this.player, { locks: styleLocks(null) });
     },
+    makeStar() { return { id: 'STAR', name: this.name.trim(), num: this.player.num, pos: this.pos, dpos: this.dpos, ratings: this.ratings, skin: this.player.skin, hair: this.player.hair, style: Object.assign({}, this.player.style), age: 22, isStar: true }; },
     baseRatings() { const b = Object.assign({}, POS_BASE[this.pos]); const bonus = DPOS_BONUS[this.dpos]; for (const k in bonus) b[k] += bonus[k]; return b; },
     update(dt, input) {
       const lr = (input.pressed('LEFT') ? -1 : 0) + (input.pressed('RIGHT') ? 1 : 0);
@@ -8765,25 +9233,33 @@ FF.career = (function () {
         if (input.pressed('BACK')) this.step = 2;
         return;
       }
-      if (this.step === 4) {           // team
+      if (this.step === 4) {           // path: the draft, or pick your team
+        this.path = navUpDown(input, this.path || 0, 2);
+        if (confirm(input)) {
+          FF.audio.play('select');
+          if (this.path === 0) { const star = this.makeStar(); FF.go('starDraft', { star }); }
+          else { this.step = 5; }
+        }
+        if (input.pressed('BACK')) this.step = 3;
+        return;
+      }
+      if (this.step === 5) {           // team
         this.team = navUpDown(input, this.team, 16);
         if (lr) this.team = (this.team + 8) % 16;
         this.look.team = D.TEAMS[this.team];
         if (confirm(input)) {
-          const team = D.TEAMS[this.team];
-          const star = { id: 'STAR', name: this.name.trim(), num: this.player.num, pos: this.pos, dpos: this.dpos, ratings: this.ratings, skin: this.player.skin, hair: this.player.hair, style: Object.assign({}, this.player.style), age: 22, isStar: true };
-          const career = { star, teamId: team.id, season: 0, xp: 0, careerStats: { xp: 0 }, seasonStats: {}, totalGames: 0, milestones: {}, awards: [], history: [], seasonXP: 0 };
-          C.startSeason(career); career.goals = C.seasonGoals(star, FF.settings.halfMinutes); career.contract = { seasons: 2, signed: 1 };
-          FF.saveCareer(career); FF.audio.play('select'); FF.go('superstar');
+          // signing where you want: no draft pedigree, so the coach starts you a little lower on the depth chart
+          newCareer(this.makeStar(), D.TEAMS[this.team].id, { trust: 45, contract: 2, bonus: 0, award: null, draft: { signed: true } });
+          FF.audio.play('select'); FF.go('superstar');
         }
-        if (input.pressed('BACK')) this.step = 3;
+        if (input.pressed('BACK')) this.step = 4;
       }
     },
     draw(x, t) {
       UI.bg(x); header(x, 'CREATE A SUPERSTAR');
       const team = D.TEAMS[this.team];
-      const stepNames = ['NAME', 'LOOK & STYLE', 'POSITIONS', 'RATINGS', 'TEAM'];
-      FF.text(x, 'STEP ' + (this.step + 1) + ' OF 5: ' + stepNames[this.step], W / 2, 31, { color: '#fff', outline: '#000', align: 'center' });
+      const stepNames = ['NAME', 'LOOK & STYLE', 'POSITIONS', 'RATINGS', 'DRAFT OR SIGN', 'TEAM'];
+      FF.text(x, 'STEP ' + Math.min(this.step + 1, 5) + ' OF 5: ' + stepNames[this.step], W / 2, 31, { color: '#fff', outline: '#000', align: 'center' });
       if (this.step === 1) { this.look.draw(x, t, 8, 44); footer(x, FF.touch && FF.touch.active ? 'TAP - / + TO CHANGE   OK: NEXT   BACK: PREVIOUS STEP' : 'ARROWS: CHANGE   ENTER: NEXT   ESC: BACK'); return; }
       const preview = Object.assign({}, this.player, { ratings: this.ratings || POS_BASE[this.pos] });
       const sp = FF.sprites.build(team, preview, '#ffe400', Math.floor(t * 1.5) % 8, 'idle', 0);
@@ -8814,6 +9290,14 @@ FF.career = (function () {
           const bx = 100 + 70, bw = 48; FF.rect(x, bx, y + 4, bw, 5, '#222'); FF.rect(x, bx, y + 4, Math.round(bw * v / 99), 5, on ? '#ffe14a' : v >= 80 ? '#4ee04e' : v >= 60 ? '#ffe14a' : '#ff7a4a');
         });
         FF.text(x, '* = KEY RATING FOR YOUR POSITIONS (MAX ' + CREATE_MAX + ' EACH)', 100, 205, { font: FONT3x5, color: '#aaa' });
+      } else if (this.step === 4) {
+        const opts = [['ENTER THE DRAFT', '16 TEAMS, 2 ROUNDS. YOUR OVR SETS YOUR STOCK.', 'HIGH PICK: BIG BONUS, 3-YEAR DEAL, MORE TRUST.'],
+                      ['SIGN WITH A TEAM', 'PICK ANY TEAM. A 2-YEAR DEAL, NO BONUS.', 'THE COACH HAS NOT SEEN YOU: LOWER TRUST.']];
+        opts.forEach(([t1, a, b], i) => { const y = 50 + i * 54; const on = (this.path || 0) === i;
+          FF.rect(x, 100, y, 212, 48, '#000'); FF.panel(x, 101, y + 1, 210, 46, on ? '#3a3010' : '#2a2a3a', on ? '#8a7a30' : '#5a5a7a', '#101018');
+          FF.text(x, t1, 108, y + 7, { color: on ? '#ffe14a' : '#fff', outline: '#000' }); FF.text(x, a, 108, y + 22, { font: FONT3x5, color: '#ddd' }); FF.text(x, b, 108, y + 31, { font: FONT3x5, color: '#ddd' });
+          FF.tapRow(100, y, 212, 48, i, this.path || 0, { n: 2 }); });
+        FF.text(x, 'YOUR OVR: ' + D.ovr({ pos: this.pos, dpos: this.dpos, ratings: this.ratings }), 108, 162, { font: FONT3x5, color: '#8cf38c' });
       } else {
         D.TEAMS.forEach((tm, i) => { const on = this.team === i; const col = i < 8 ? 0 : 1; const y = 48 + (i % 8) * 13; const px = 100 + col * 112; if (on) FF.text(x, '>', px - 8, y, { color: '#ffe14a', outline: '#000' }); FF.text(x, tm.name, px, y, { color: on ? '#ffe14a' : '#fff', outline: '#000' });
           FF.tapZone(px - 10, y - 3, 108, 13, FF.navSeq(this.team, i, 'v', 16, true)); });
@@ -8973,7 +9457,7 @@ FF.career = (function () {
       const me = g.humanTeam, win = g.winner === me;
       const us = g.score[me], them = g.score[1 - me];
       const oppId = g.teams[1 - me].id;
-      const mult = C.DIFF_MULT[FF.clamp(g.difficulty | 0, 0, 2)];
+      const mult = FF.diffMult(g.difficulty);
       const wasPlayoff = !!(c.playoffs && c.playoffs.round !== 'OUT' && c.playoffs.round !== 'CHAMPION');
       const lvBefore = levelOf(c).level;
       if (wasPlayoff) C.recordPlayoffGame(c, oppId, us, them); else C.recordUserGame(c, oppId, us, them);
@@ -8992,7 +9476,17 @@ FF.career = (function () {
       c.xp += xp; c.careerStats.xp = (c.careerStats.xp || 0) + xp; c.seasonXP = (c.seasonXP || 0) + xp; c.seasonPlayXP = (c.seasonPlayXP || 0) + g.starXP;
       const lvAfter = levelOf(c).level;
       this.levelUp = lvAfter > lvBefore ? levelOf(c) : null;
-      this.grade = C.gameGrade(g.starXP, win, c.star.pos, g.settings.halfMinutes);
+      // PLAY GRADES -> COACH TRUST: the game's grade point average (B = 3.0) moves trust; a win helps a little
+      const pg = g.playGrades || [];
+      this.gpa = pg.length ? pg.reduce((a, b) => a + b.pts, 0) / pg.length : null;
+      const roleBefore = roleOf(c.trust), capBefore = isCaptain(c);
+      this.trustDelta = this.gpa == null ? 0 : Math.round(FF.clamp((this.gpa - 2.6) * 7 + (win ? 1 : 0), -8, 8));
+      c.trust = FF.clamp((c.trust == null ? 50 : c.trust) + this.trustDelta, 0, 100);
+      this.roleChange = roleOf(c.trust).name !== roleBefore.name ? roleOf(c.trust) : null;
+      this.bestPlays = pg.filter(p => p.pts >= 4).length; this.badPlays = pg.filter(p => p.pts <= 1).length; this.nPlays = pg.length;
+      if (!capBefore && isCaptain(c) && !(c.captainOf || []).includes(c.teamId)) { c.captainOf = (c.captainOf || []).concat([c.teamId]); c.captainEver = true; const b = 100; c.xp += b; c.careerStats.xp += b; c.awards.push({ name: 'NAMED CAPTAIN OF THE ' + D.teamById(c.teamId).name, season: c.season, xp: b }); bonuses.push(['NAMED TEAM CAPTAIN', b]); this.total += 0; xp += b; }
+      const gpaGrade = v => v >= 3.85 ? 'A+' : v >= 3.5 ? 'A' : v >= 3.15 ? 'B+' : v >= 2.85 ? 'B' : v >= 2.5 ? 'C+' : v >= 2.15 ? 'C' : v >= 1.5 ? 'D' : 'F';
+      this.grade = this.gpa != null && pg.length >= 6 ? gpaGrade(this.gpa) : C.gameGrade(g.starXP, win, c.star.pos, g.settings.halfMinutes);
       this.win = win; this.st = st; this.bonuses = bonuses; this.total = xp;
       FF.saveCareer(c); FF.audio.music('half');
     },
@@ -9006,6 +9500,8 @@ FF.career = (function () {
       FF.text(x, 'GAME GRADE', 270, 34, { font: FONT3x5, color: '#aaa', align: 'center' });
       const gc = this.grade[0] === 'A' ? '#4ee04e' : this.grade[0] === 'B' ? '#8cf38c' : this.grade[0] === 'C' ? '#ffe14a' : '#ff7a4a';
       FF.text(x, this.grade, 270, 44, { scale: 2, color: gc, outline: '#000', align: 'center', italic: true });
+      if (this.gpa != null) FF.text(x, this.nPlays + ' PLAYS  GPA ' + this.gpa.toFixed(2), 270, 63, { font: FONT3x5, color: '#ddd', align: 'center' });
+      { const tr = c.trust, ro = roleOf(tr), dc = this.trustDelta > 0 ? '#8cf38c' : this.trustDelta < 0 ? '#ff8080' : '#aaa'; FF.text(x, 'COACH TRUST ' + Math.round(tr) + ' (' + (this.trustDelta >= 0 ? '+' : '') + this.trustDelta + ')', 270, 78, { font: FONT3x5, color: dc, align: 'center' }); FF.text(x, this.roleChange ? 'NEW ROLE: ' + ro.name + '!' : 'ROLE: ' + ro.name, 270, 86, { font: FONT3x5, color: this.roleChange ? '#ffe14a' : '#aaa', align: 'center' }); }
       FF.text(x, 'YOUR GAME', 12, 46, { color: '#ffe14a', outline: '#000' });
       const s = this.st; const rows = [];
       if (s.passAtt) rows.push(['PASSING', (s.passCmp || 0) + '/' + s.passAtt + ', ' + (s.passYds || 0) + ' YDS, ' + (s.passTD || 0) + ' TD, ' + (s.passInt || 0) + ' INT']);
@@ -9017,9 +9513,9 @@ FF.career = (function () {
       const agg = {}; for (const e of g.xpLog) for (const [k, v] of e.items) agg[k] = (agg[k] || 0) + v;
       let i = 0; for (const k in agg) { const col = i % 2, row = Math.floor(i / 2); FF.text(x, k, 12 + col * 100, 112 + row * 8, { font: FONT3x5, color: '#ddd' }); FF.text(x, (agg[k] > 0 ? '+' : '') + agg[k], 100 + col * 100, 112 + row * 8, { font: FONT3x5, color: agg[k] > 0 ? '#8cf38c' : '#ff8080', align: 'right' }); i++; if (i >= 10) break; }
       // bonuses column (green = milestone, yellow = season goal)
-      FF.text(x, 'BONUSES', 214, 80, { font: FONT3x5, color: '#ffe14a' });
-      if (!this.bonuses.length) FF.text(x, 'NONE THIS GAME', 214, 90, { font: FONT3x5, color: '#777' });
-      this.bonuses.slice(0, 8).forEach(([k, v], j) => { const name = k.replace(/^MILESTONE: |^GOAL: /, ''); FF.text(x, name.length > 19 ? name.slice(0, 19) : name, 214, 90 + j * 8, { font: FONT3x5, color: k.startsWith('MILESTONE') ? '#8cf38c' : k.startsWith('GOAL') ? '#ffe14a' : '#fff' }); FF.text(x, '+' + v, 312, 90 + j * 8, { font: FONT3x5, color: '#8cf38c', align: 'right' }); });
+      FF.text(x, 'BONUSES', 214, 96, { font: FONT3x5, color: '#ffe14a' });
+      if (!this.bonuses.length) FF.text(x, 'NONE THIS GAME', 214, 106, { font: FONT3x5, color: '#777' });
+      this.bonuses.slice(0, 6).forEach(([k, v], j) => { const name = k.replace(/^MILESTONE: |^GOAL: /, ''); FF.text(x, name.length > 19 ? name.slice(0, 19) : name, 214, 106 + j * 8, { font: FONT3x5, color: k.startsWith('MILESTONE') ? '#8cf38c' : k.startsWith('GOAL') ? '#ffe14a' : '#fff' }); FF.text(x, '+' + v, 312, 106 + j * 8, { font: FONT3x5, color: '#8cf38c', align: 'right' }); });
       FF.rect(x, 8, 160, 304, 1, '#5a5a7a');
       FF.text(x, 'TOTAL +' + this.total + ' XP   BANK ' + c.xp + ' XP   SEASON ' + (c.seasonXP || 0) + ' XP', W / 2, 166, { color: '#8cf38c', outline: '#000', align: 'center' });
       if (this.levelUp) { const on = Math.floor(t * 3) % 2 === 0; FF.text(x, 'LEVEL UP!  ' + this.levelUp.title + ' - RATING CAP NOW ' + C.ratingCap(this.levelUp.level), W / 2, 180, { color: on ? '#ffe14a' : '#fff', outline: '#000', align: 'center' }); }
@@ -9033,7 +9529,7 @@ FF.career = (function () {
   S.trainingResult = {
     enter(args) {
       const g = args.game, c = FF.loadCareer(); this.career = c; if (!c) { FF.go('superstar'); return; }
-      const mult = C.DIFF_MULT[FF.clamp(g.difficulty | 0, 0, 2)]; const cap = Math.round(TRAIN_CAP * mult);
+      const mult = FF.diffMult(g.difficulty); const cap = Math.round(TRAIN_CAP * mult);
       this.earned = Math.max(0, g.starXP); this.paid = Math.min(cap, this.earned); this.cap = cap;
       c.xp += this.paid; c.careerStats.xp = (c.careerStats.xp || 0) + this.paid; c.seasonXP = (c.seasonXP || 0) + this.paid; c.trained = trainKey(c);
       FF.saveCareer(c); this.plays = g.playsRun; this.capped = this.earned >= cap; FF.audio.music('menu');
@@ -9057,14 +9553,18 @@ FF.career = (function () {
     enter() {
       const c = FF.loadCareer(); this.career = c; if (!c) { FF.go('superstar'); return; }
       const lv = levelOf(c); const me = D.teamById(c.teamId); const rec = C.userRecord(c);
-      const offers = [];
-      const good = lv.level >= 3 || rec[0] >= 4;
-      if (good) offers.push({ teamId: c.teamId, seasons: lv.level >= 5 ? 3 : 2, bonus: 100 + lv.level * 25, pitch: 'RE-SIGN. FRANCHISE PLAYER, ' + (lv.level >= 5 ? 'THREE' : 'TWO') + ' MORE SEASONS.' });
+      // FREE AGENCY: your club re-signs you if you earned it (level, record or the coach's trust); two other clubs call.
+      // Past 30 the deals get shorter and the bonuses smaller; at 32 and up you may also walk away.
+      const offers = []; const age = c.star.age || 22; const vet = age >= 31, old = age >= 34;
+      const yrs = n => old ? 1 : vet ? Math.min(2, n) : n; const bon = b => Math.round(b * (old ? 0.4 : vet ? 0.7 : 1));
+      const good = lv.level >= 3 || rec[0] >= 4 || (c.trust || 0) >= 55;
+      if (good) offers.push({ teamId: c.teamId, seasons: yrs(lv.level >= 5 ? 3 : 2), bonus: bon(100 + lv.level * 25), keepTrust: true, pitch: 'RE-SIGN. THE COACH KNOWS YOU - YOUR TRUST (' + Math.round(c.trust) + ') CARRIES OVER.' });
       else this.notRenewed = true;
       const others = D.TEAMS.filter(t => t.id !== c.teamId).map(t => ({ t, s: D.strength(t.roster) })).sort((a, b) => b.s - a.s);
       const contender = others[rnd.i(0, 2)].t, rebuild = others[others.length - 1 - rnd.i(0, 2)].t;
-      offers.push({ teamId: contender.id, seasons: 2, bonus: 150, pitch: 'CONTENDER. TEAM OVR ' + Math.round(D.strength(contender.roster)) + '. WIN NOW.' });
-      offers.push({ teamId: rebuild.id, seasons: 3, bonus: 250, pitch: 'REBUILDING. TEAM OVR ' + Math.round(D.strength(rebuild.roster)) + '. IT ALL RUNS THROUGH YOU. BIGGER BONUS.' });
+      offers.push({ teamId: contender.id, seasons: yrs(2), bonus: bon(150), trust: 45, pitch: 'CONTENDER. TEAM OVR ' + Math.round(D.strength(contender.roster)) + '. WIN NOW - BUT EARN THE COACH\'S TRUST.' });
+      offers.push({ teamId: rebuild.id, seasons: yrs(3), bonus: bon(250), trust: 60, pitch: 'REBUILDING. TEAM OVR ' + Math.round(D.strength(rebuild.roster)) + '. FEATURED FROM DAY ONE. BIGGER BONUS.' });
+      if (age >= 32) offers.push({ retire: true, pitch: 'WALK AWAY - YOUR LEGACY GOES TO THE HALL OF FAME VOTE.' });
       this.offers = offers; this.sel = 0; FF.audio.music('menu');
     },
     update(dt, input) {
@@ -9072,6 +9572,9 @@ FF.career = (function () {
       this.sel = navUpDown(input, this.sel, this.offers.length);
       if (confirm(input)) {
         const o = this.offers[this.sel]; const c = this.career;
+        if (o.retire) { FF.audio.play('select'); FF.go('starRetire'); return; }
+        if (!o.keepTrust) c.trust = o.trust;                       // a new coach starts fresh
+        if (!(c.teamsPlayed || []).includes(o.teamId)) c.teamsPlayed = (c.teamsPlayed || []).concat([o.teamId]);
         c.teamId = o.teamId; c.contract = { seasons: o.seasons, signed: c.season + 1 }; c.xp += o.bonus; c.careerStats.xp = (c.careerStats.xp || 0) + o.bonus;
         c.awards.push({ name: 'SIGNED WITH ' + D.teamById(o.teamId).name + ' (' + o.seasons + ' YRS)', season: c.season, xp: o.bonus });
         FF.saveCareer(c); FF.audio.play('td'); FF.go('superstar');
@@ -9081,16 +9584,83 @@ FF.career = (function () {
       UI.bg(x); header(x, 'CONTRACT');
       const c = this.career; if (!c) return;
       FF.text(x, this.notRenewed ? D.teamById(c.teamId).name + ' DID NOT RENEW YOUR DEAL. OTHER TEAMS CALLED.' : 'YOUR DEAL IS UP. THREE OFFERS ON THE TABLE.', W / 2, 32, { font: FONT3x5, color: this.notRenewed ? '#ff9a6a' : '#ddd', align: 'center' });
+      const step = this.offers.length > 3 ? 40 : 46;
       this.offers.forEach((o, i) => {
-        const tm = D.teamById(o.teamId); const y = 46 + i * 46; const on = this.sel === i;
-        FF.rect(x, 20, y, 280, 40, '#000'); FF.panel(x, 21, y + 1, 278, 38, on ? '#3a3010' : '#2a2a3a', on ? '#8a7a30' : '#5a5a7a', '#101018');
+        const y = 42 + i * step; const on = this.sel === i;
+        if (o.retire) { FF.rect(x, 20, y, 280, 34, '#000'); FF.panel(x, 21, y + 1, 278, 32, on ? '#3a3010' : '#2a2a3a', on ? '#8a7a30' : '#5a5a7a', '#101018'); FF.text(x, 'RETIRE', 68, y + 6, { color: on ? '#ffe14a' : '#fff', outline: '#000' }); FF.text(x, o.pitch, 68, y + 20, { font: FONT3x5, color: '#ddd' }); FF.tapRow(20, y, 280, 34, i, this.sel, { n: this.offers.length }); return; }
+        const tm = D.teamById(o.teamId);
+        FF.rect(x, 20, y, 280, step - 6, '#000'); FF.panel(x, 21, y + 1, 278, step - 8, on ? '#3a3010' : '#2a2a3a', on ? '#8a7a30' : '#5a5a7a', '#101018');
         const lg = FF.sprites.logo(tm, 2); x.drawImage(lg, 28, y + 8);
         FF.text(x, tm.city + ' ' + tm.name, 68, y + 6, { color: on ? '#ffe14a' : '#fff', outline: '#000' });
         FF.text(x, o.seasons + ' SEASONS   SIGNING BONUS +' + o.bonus + ' XP', 68, y + 18, { font: FONT3x5, color: '#8cf38c' });
         FF.text(x, o.pitch, 68, y + 28, { font: FONT3x5, color: '#ddd' });
-        FF.tapRow(20, y, 280, 40, i, this.sel, { n: this.offers.length });
+        FF.tapRow(20, y, 280, step - 6, i, this.sel, { n: this.offers.length });
       });
+      FF.text(x, 'AGE ' + (c.star.age || 22) + (c.star.age >= 31 ? ' - VETERAN DEALS ARE SHORTER' : ''), W / 2, 206, { font: FONT3x5, color: '#aaa', align: 'center' });
       footer(x, FF.touch && FF.touch.active ? 'TAP AN OFFER TO SIGN' : 'UP/DOWN: OFFER   ENTER: SIGN');
+    },
+  };
+
+  /* --------------------------------------------------- retirement */
+  S.starRetire = {
+    enter() {
+      const c = FF.loadCareer(); this.career = c; if (!c) { FF.go('superstar'); return; }
+      this.L = FF.legends.legacy(c); this.V = FF.legends.verdict(this.L.total);
+      this.entry = FF.legends.retire(c);
+      const all = FF.legends.local(); this.rank = all.findIndex(e => e.id === this.entry.id) + 1; this.of = all.length;
+      try { localStorage.removeItem('ff94_career'); } catch (e) { }
+      FF.audio.music('half'); if (this.V.hof) FF.audio.play('td');
+    },
+    update(dt, input) { if (!this.career) return; if (confirm(input) || back(input)) FF.go('hallOfFame', { from: 'retire', id: this.entry.id }); },
+    draw(x, t) {
+      UI.bg(x); header(x, this.V && this.V.hof ? 'HALL OF FAME' : 'RETIREMENT');
+      const c = this.career; if (!c) return; const st = c.star;
+      FF.text(x, st.name + ' RETIRES AFTER ' + (c.history || []).length + ' SEASONS, AGE ' + (st.age || 22), W / 2, 31, { color: '#fff', outline: '#000', align: 'center' });
+      const on = Math.floor(t * 2.5) % 2 === 0;
+      FF.textFX(x, this.V.name, W / 2, 44, { scale: this.V.name.length > 15 ? 1 : 2, gradient: ['#fff8c0', this.V.color, '#a06010'], outline: 2, shadow: 2, align: 'center', italic: true });
+      FF.text(x, 'LEGACY SCORE ' + this.L.total, W / 2, 68, { color: on && this.V.hof ? '#ffe14a' : '#fff', outline: '#000', align: 'center' });
+      FF.text(x, 'BREAKDOWN', 14, 82, { font: FONT3x5, color: '#ffe14a' });
+      this.L.parts.slice(0, 12).forEach(([k, v], i) => { const col = i % 2, row = Math.floor(i / 2); FF.text(x, k, 14 + col * 150, 92 + row * 9, { font: FONT3x5, color: '#ddd' }); FF.text(x, '+' + v, 150 + col * 150, 92 + row * 9, { font: FONT3x5, color: '#8cf38c', align: 'right' }); });
+      const e = this.entry;
+      FF.text(x, e.titles + ' TITLE' + (e.titles === 1 ? '' : 'S') + '   ' + e.mvps + ' MVP   ' + e.tds + ' TOUCHDOWNS   ' + e.teams.length + ' TEAM' + (e.teams.length === 1 ? '' : 'S') + '   ' + e.draft, W / 2, 152, { font: FONT3x5, color: '#cfd8ff', align: 'center' });
+      FF.text(x, 'RANKED #' + this.rank + ' OF ' + this.of + ' CAREERS ON THIS DEVICE', W / 2, 164, { font: FONT3x5, color: '#ffe14a', align: 'center' });
+      FF.text(x, 'HALL OF FAME AT 200, FIRST BALLOT AT 300', W / 2, 176, { font: FONT3x5, color: '#888', align: 'center' });
+      footer(x, FF.touch && FF.touch.active ? 'TAP: SEE THE LEADERBOARD' : 'ENTER: SEE THE LEADERBOARD');
+    },
+  };
+  // the leaderboard: every retired career on this device, and the shared board when the game runs on claude.ai
+  S.hallOfFame = {
+    enter(args) {
+      this.args = args || {}; this.tab = 0; this.scroll = 0; this.rows = FF.legends.local();
+      if (FF.legends.available()) FF.legends.fetchGlobal();
+    },
+    list() { return this.tab === 0 ? this.rows : (FF.legends.global.rows || []); },
+    update(dt, input) {
+      const n = this.list().length;
+      if (input.pressed('LEFT') || input.pressed('RIGHT')) { this.tab = this.tab ? 0 : 1; this.scroll = 0; FF.audio.play('tick'); }
+      if (input.pressed('DOWN')) this.scroll = Math.min(Math.max(0, n - 12), this.scroll + 1); if (input.pressed('UP')) this.scroll = Math.max(0, this.scroll - 1);
+      if (back(input) || confirm(input)) FF.go(this.args.from === 'menu' ? 'mainmenu' : 'superstar');
+    },
+    draw(x, t) {
+      UI.bg(x); header(x, 'HALL OF FAME');
+      const tabs = ['THIS DEVICE', 'ALL PLAYERS'];
+      tabs.forEach((tb, i) => { const on = this.tab === i; const px = 80 + i * 100; FF.rect(x, px, 30, 92, 12, on ? '#ffe14a' : '#2a2a3a'); FF.text(x, tb, px + 46, 33, { font: FONT3x5, color: on ? '#000' : '#ddd', align: 'center' }); FF.tapZone(px, 28, 92, 16, on ? [] : ['RIGHT'], tb); });
+      const G = FF.legends.global; const rows = this.list();
+      if (this.tab === 1 && !FF.legends.available()) { FF.text(x, 'THE SHARED LEADERBOARD LIVES IN THE CLAUDE.AI VERSION OF THE GAME.', W / 2, 90, { font: FONT3x5, color: '#ddd', align: 'center' }); FF.text(x, 'CAREERS RETIRED HERE ARE RANKED ON THIS DEVICE.', W / 2, 100, { font: FONT3x5, color: '#aaa', align: 'center' }); }
+      else if (this.tab === 1 && G.status === 'loading') FF.text(x, 'LOADING THE LEAGUE BOARD...', W / 2, 90, { font: FONT3x5, color: '#ddd', align: 'center' });
+      else if (this.tab === 1 && G.status === 'error') FF.text(x, 'COULD NOT REACH THE BOARD (' + (G.err || 'ERROR') + ')', W / 2, 90, { font: FONT3x5, color: '#ff9a6a', align: 'center' });
+      else if (!rows.length) FF.text(x, this.tab === 0 ? 'NO RETIRED CAREERS YET. RETIRE A SUPERSTAR TO BE RANKED HERE.' : 'NOBODY HAS RETIRED A CAREER YET. BE THE FIRST.', W / 2, 90, { font: FONT3x5, color: '#aaa', align: 'center' });
+      else {
+        [['#', 18, 'right'], ['PLAYER', 32], ['POS', 96], ['YRS', 140, 'right'], ['RINGS', 170, 'right'], ['MVP', 190, 'right'], ['VERDICT', 198], ['LEGACY', 310, 'right']].forEach(([h, hx, al]) => FF.text(x, h, hx, 48, { font: FONT3x5, color: '#ffe14a', align: al || 'left' }));
+        rows.slice(this.scroll, this.scroll + 12).forEach((e, j) => { const i = this.scroll + j; const y = 58 + j * 12; const hl = (this.args.id && e.id === this.args.id) || e.mine;
+          FF.rect(x, 8, y - 2, 304, 11, hl ? 'rgba(255,225,74,0.22)' : i % 2 ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.4)');
+          FF.text(x, String(i + 1), 18, y, { font: FONT3x5, color: '#fff', align: 'right' }); FF.text(x, (e.name || '').slice(0, 14), 32, y, { font: FONT3x5, color: hl ? '#ffe14a' : '#fff' });
+          FF.text(x, (e.pos || '') + '/' + (e.dpos || ''), 96, y, { font: FONT3x5, color: '#ddd' }); FF.text(x, String(e.seasons), 140, y, { font: FONT3x5, color: '#ddd', align: 'right' });
+          FF.text(x, String(e.titles), 168, y, { font: FONT3x5, color: '#ddd', align: 'right' }); FF.text(x, String(e.mvps), 188, y, { font: FONT3x5, color: '#ddd', align: 'right' });
+          FF.text(x, (e.verdict || '').replace('FIRST-BALLOT ', '1ST BALLOT '), 198, y, { font: FONT3x5, color: /HALL/.test(e.verdict) ? '#ffe14a' : '#cfd8ff' });
+          FF.text(x, String(e.legacy), 310, y, { font: FONT3x5, color: '#8cf38c', align: 'right' }); });
+      }
+      footer(x, FF.touch && FF.touch.active ? 'TAP A TAB   SWIPE: SCROLL   BACK: DONE' : 'LEFT/RIGHT: TAB   UP/DOWN: SCROLL   ESC: BACK');
     },
   };
 
@@ -9101,7 +9671,7 @@ FF.career = (function () {
     enter() {
       const c = FF.loadCareer(); this.career = c; if (!c || c.seasonClosed) { FF.go('superstar'); return; }
       const games = c.results.length || 1; const mins = FF.settings.halfMinutes * 2;
-      const par = (PAR_PER_MIN[c.star.pos] || 20) * mins * games * C.DIFF_MULT[FF.settings.difficulty];
+      const par = (PAR_PER_MIN[c.star.pos] || 20) * mins * games * FF.diffMult(FF.settings.difficulty);
       const ratio = (c.seasonPlayXP || c.seasonXP || 0) / Math.max(1, par);
       const madePlayoffs = c.playoffs && c.playoffs.seed <= 4;
       const awards = [];

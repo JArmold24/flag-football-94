@@ -1,4 +1,4 @@
-# Flag Football '94 — PC & phone build (v0.27)
+# Flag Football '94 — PC & phone build (v0.28)
 
 A 16-bit style 5-on-5 flag football game built from the design document, with the
 Madden '94 play-calling grid, passing windows, and camera, plus a **Superstar** career mode.
@@ -118,6 +118,60 @@ Rebuild the sheet with `cd tools/prerender && npm install && node render.js` (ne
 - Score strip with team emblems and a possession arrow; receiver windows centered; dust on cuts,
   spins and dives; the pulled flag tumbles away; screen shake on a sack; scene fades; play-call
   diagrams no longer spill out of their tiles; menus sit over a dusk stadium.
+
+## v0.28 — a CPU that reads the situation, DYNAMIC difficulty, and a full Superstar career
+
+**Audibles and motion on a phone.**
+- **Audibles** were already fully wired (AUD → tap a tile). The window now stays open 6 s on touch (it was 3).
+- **Motion** was the real problem. It needed MOTION held with one thumb and the stick dragged with the other, which left no thumb for SNAP, so motion always ended before the snap. A motioned receiver also ran his route as if he were still in his old spot, even on a keyboard.
+- **New motion:**
+  - Tap MOTION (or tap E): receiver 1 jogs across the formation; snap while he's moving. Tap again (SET) to stop him. Holding E + arrows still works on a keyboard.
+  - At the snap he keeps his running start and runs his route from where he is.
+  - His man-coverage defender has to trail him across, and a zone defense lets him go, so motion tells you man or zone.
+  - Retro styles get the MOTION button too.
+
+**Situational CPU play-calling.**
+- The CPU reads the down and distance as yards needed per down left, plus the field zone, score and clock.
+- **Two-minute drill:** passes, sideline routes, out-of-bounds runs, no-huddle, timeouts.
+- **Protecting a late lead:** runs and short throws; ball carriers stay in bounds.
+- **Last down:** throws past the line to gain.
+- **At the goal line:** shorter, safer calls.
+- **Defense:** blitzes and man on short yardage, keeps it in front late with a lead, spies a fast QB.
+- **Tries after touchdowns:** chosen from a real 1-or-2-point chart late in games.
+- **Measured:** run calls are 32% when protecting a lead vs. 10% normally; 2% in the hurry-up. On the last down the pass reaches the line 87% of the time (70% normally).
+
+**DYNAMIC difficulty** (Options / Exhibition → DIFFICULTY):
+- **Level:** starts between Rookie and Pro. Every win against the CPU raises it a notch (a loss holds it), up to Level 16, a bit past All-Pro. XP scales with the level.
+- **Adapts within limits:** after 4+ plays it leans its calls against your habits:
+  - On offense it reads run vs. pass, deep vs. short and your favorite side.
+  - On defense it reads blitz, man or zone.
+  - A habit gets at most 60% more or less weight, so it never shuts you down. Man defenders also shade deeper against a deep thrower.
+- **Commentary:** when it guesses right, the banner tells you ("THEY HAVE SEEN THAT ONE BEFORE").
+
+**Superstar: play grades → coach trust → role.**
+- Every snap gets a letter that pops up beside the XP: the catch, the run, getting open on your route (running the route counts), your man in coverage, the pull, the throw.
+- The game's grade-point average moves COACH TRUST (0–100) after each game.
+- **Roles:**
+  - ROTATION (fewer looks)
+  - STARTER
+  - FEATURED (60+: the QB looks your way more; a Superstar QB may audible, hot route and use motion)
+  - FRANCHISE (80+: you may also check the defense)
+- The post-game screen shows the plays, GPA, trust change and any new role. The game grade now comes from the play grades.
+
+**Superstar: the full career arc.**
+- **Draft or sign:** after creating your player, enter the draft or sign with any team.
+  - **The draft:** 16 teams, 2 rounds, worst team first. Your stock is your OVR plus some buzz. Watch pick by pick, sim to your pick, or skip it all.
+  - **Your draft slot sets the deal:** the signing bonus, a 3-year deal for a first-rounder, and starting coach trust (55 for a top-5 pick).
+  - **Signing** means a 2-year deal, no bonus and lower trust.
+- **Free agency:**
+  - Your club re-signs you if you earned it, and your trust carries over.
+  - A contender and a rebuilding team also call; the rebuilder features you from day one. A new coach resets trust.
+  - Past 30 the deals shrink; from 32 you can walk away instead.
+- **Captain:** voted in at level 5 with trust 55 (or trust 80 earlier). It comes with a one-time award, and teammates get +2.
+- **Aging:** a year older each season. The legs go first in your 30s.
+- **Retirement:** at any season's end after two seasons; at 38 it's time.
+- **Hall of Fame:** a LEGACY SCORE (career XP, awards, rings, milestones, longevity, peak level, touchdowns and takeaways). 200 makes the Hall of Fame, 300 is first ballot.
+- **Leaderboard:** every retired career ranks on this device (main menu → HALL OF FAME). In the claude.ai version, an ALL PLAYERS board is shared with everyone who opens the game; each player writes only their own entries.
 
 ## v0.27 — a broadcast banner that knows what happened
 
