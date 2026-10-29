@@ -14,7 +14,7 @@
 <script>if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));</script>
 
 <style>
-  html, body { margin: 0; height: 100%; background: #14141c; overflow: hidden; touch-action: none; overscroll-behavior: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: #14141c; overflow: hidden; touch-action: none; overscroll-behavior: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none; }
   body {
     display: flex; align-items: center; justify-content: center;
     background-color: #14141c;
@@ -29,6 +29,100 @@
 <body>
 <canvas id="game" width="320" height="224"></canvas>
 <div id="err"></div>
+<script>
+/* ---- src/native.js ---- */
+/* native.js — the iPhone / iPad app layer (Capacitor). In a browser it does nothing and the game runs as before.
+   Inside the app it:
+   - mirrors every save (careers, franchise, settings) into native storage, and restores it if the web store is
+     ever cleared by iOS
+   - keeps the screen awake while the game is open
+   - plays haptics for the big moments (catch, pull, pick, touchdown, sack)
+   - signs in to Game Center: the Superstar legacy score goes to the Hall of Fame leaderboard, career
+     milestones unlock achievements
+   Plugins are reached through Capacitor's native bridge (window.Capacitor.nativePromise), so no bundler is needed.
+   This file loads before everything else so the save restore happens before the settings are read. */
+'use strict';
+
+(function () {
+  const C = window.Capacitor;
+  const on = !!(C && typeof C.isNativePlatform === 'function' && C.isNativePlatform() && typeof C.nativePromise === 'function');
+  const call = (plugin, method, opts) => { try { return C.nativePromise(plugin, method, opts || {}); } catch (e) { return Promise.reject(e); } };
+  const N = window.NATIVE = { on, call, platform: on && C.getPlatform ? C.getPlatform() : 'web', start: () => {} };
+  if (!on) return;
+
+  /* ------------------------------------------------------------------ saves */
+  const PFX = 'ff94_';
+  const raw = { set: Storage.prototype.setItem, remove: Storage.prototype.removeItem };
+  const isLocal = s => { try { return s === window.localStorage; } catch (e) { return false; } };
+  Storage.prototype.setItem = function (k, v) {
+    raw.set.call(this, k, v);
+    if (isLocal(this) && String(k).indexOf(PFX) === 0) call('Preferences', 'set', { key: String(k), value: String(v) }).catch(() => {});
+  };
+  Storage.prototype.removeItem = function (k) {
+    raw.remove.call(this, k);
+    if (isLocal(this) && String(k).indexOf(PFX) === 0) call('Preferences', 'remove', { key: String(k) }).catch(() => {});
+  };
+  // the web store is normally kept by iOS; if it was purged (or this is a reinstall from a backup), copy the native
+  // saves back and reload once so the game starts from them
+  let hasLocal = false;
+  try { for (let i = 0; i < localStorage.length; i++) if ((localStorage.key(i) || '').indexOf(PFX) === 0) { hasLocal = true; break; } } catch (e) { }
+  let tried = false; try { tried = sessionStorage.getItem('ff94native_restore') === '1'; sessionStorage.setItem('ff94native_restore', '1'); } catch (e) { }
+  if (!hasLocal && !tried) {
+    call('Preferences', 'keys').then(r => {
+      const keys = ((r && r.keys) || []).filter(k => k.indexOf(PFX) === 0);
+      return Promise.all(keys.map(k => call('Preferences', 'get', { key: k }).then(v => { if (v && v.value != null) { raw.set.call(localStorage, k, v.value); return 1; } return 0; })));
+    }).then(n => { if (n && n.some(Boolean)) location.reload(); }).catch(() => {});
+  } else if (hasLocal) {
+    // first launch of this build with existing web saves: make sure the native copy is complete
+    try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.indexOf(PFX) === 0) call('Preferences', 'set', { key: k, value: localStorage.getItem(k) }).catch(() => {}); } } catch (e) { }
+  }
+
+  call('KeepAwake', 'keepAwake').catch(() => {});
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') call('KeepAwake', 'keepAwake').catch(() => {}); });
+
+  /* --------------------------------------------------------------- Game Center */
+  const LEADERBOARD = 'ff94.legacy';
+  // milestone id -> Game Center achievement id (create these, with the same ids, in App Store Connect)
+  const ACH = {
+    firstTD: 'ff94.first_td', firstPick: 'ff94.first_pick', firstWin: 'ff94.first_win', game100: 'ff94.game100',
+    hatTrick: 'ff94.hat_trick', pulls8: 'ff94.pulls8', shutdown: 'ff94.shutout', playoffWin: 'ff94.playoff_win',
+    champion: 'ff94.champion', td50: 'ff94.td50', captain: 'ff94.captain', hof: 'ff94.hall_of_fame',
+  };
+  const GC = N.gc = { ready: false, name: null, LEADERBOARD, ACH };
+  GC.signIn = () => call('GameCenter', 'signIn').then(r => { GC.ready = !!(r && r.authenticated); GC.name = r && r.name || null; return GC.ready; }).catch(() => false);
+  GC.status = () => call('GameCenter', 'status').then(r => { GC.ready = !!(r && r.authenticated); return GC.ready; }).catch(() => false);
+  GC.submitLegacy = score => GC.status().then(ok => ok ? call('GameCenter', 'submitScore', { leaderboardId: LEADERBOARD, score: Math.max(0, Math.round(score)) }) : null).catch(() => null);
+  GC.achieve = key => { const id = ACH[key]; if (!id) return Promise.resolve(null); return GC.status().then(ok => ok ? call('GameCenter', 'reportAchievement', { achievementId: id, percent: 100 }) : null).catch(() => null); };
+  GC.showLeaderboard = () => GC.status().then(ok => ok ? call('GameCenter', 'showLeaderboard', { leaderboardId: LEADERBOARD }).then(() => true) : false).catch(() => false);
+  GC.showAchievements = () => GC.status().then(ok => ok ? call('GameCenter', 'showAchievements').then(() => true) : false).catch(() => false);
+
+  /* ------------------------------------------------------------------ haptics */
+  const HAPTIC = {
+    catch: ['impact', { style: 'LIGHT' }], rip: ['impact', { style: 'MEDIUM' }], deflect: ['impact', { style: 'LIGHT' }],
+    int: ['impact', { style: 'HEAVY' }], td: ['notification', { type: 'SUCCESS' }], buzzer: ['impact', { style: 'MEDIUM' }],
+    juke: ['impact', { style: 'LIGHT' }],
+  };
+  N.haptic = name => {
+    if (!window.FF || !FF.settings || FF.settings.haptics === false) return;
+    const h = HAPTIC[name]; if (h) call('Haptics', h[0], h[1]).catch(() => {});
+  };
+
+  /* -------------------------------------------- wiring, once the game has loaded */
+  N.start = function () {
+    const FF = window.FF;
+    // touch is the input from the first frame (no keyboard prompts before the first tap); no browser full-screen button
+    if (FF.touch) { FF.touch.standalone = true; FF.touch.activate(); }
+    // sounds that get a haptic, only while a game is on
+    if (FF.audio && FF.audio.play) { const play = FF.audio.play; FF.audio.play = function (name) { if (FF.currentScene === 'game') N.haptic(name); return play.apply(this, arguments); }; }
+    // career milestones -> achievements; retirement -> the leaderboard (+ the Hall of Fame achievement)
+    if (FF.career && FF.career.checkMilestones) { const chk = FF.career.checkMilestones; FF.career.checkMilestones = function () { const hits = chk.apply(this, arguments); for (const m of hits || []) GC.achieve(m.id); return hits; }; }
+    if (FF.legends && FF.legends.retire) { const ret = FF.legends.retire; FF.legends.retire = function (c) { const e = ret.apply(this, arguments); GC.submitLegacy(e.legacy); if (e.hof) GC.achieve('hof'); if (c && c.captainEver) GC.achieve('captain'); return e; }; }
+    // Game Center asks once, a beat after the title appears (Apple: authenticate as early as possible)
+    setTimeout(() => GC.signIn(), 1200);
+  };
+})();
+
+</script>
 <script>
 /* ---- src/fonts.js ---- */
 /*
@@ -1800,7 +1894,7 @@ Object.assign(FF, { hexToRgb, rgbToHex, shade, tint, luma, rgbToHsl, hslToRgb, s
 /* ------------------------------------------------------------ settings */
 FF.defaultSettings = () => ({
   halfMinutes: 4, downsToCross: 4, downsToScore: 4, twoMinuteStops: true, timeouts: 1,
-  difficulty: 1, dynWins: 0, penalties: true, intSpot: 'spot', qbRun: 'always', fractionalScale: false, scanlines: false,
+  difficulty: 1, dynWins: 0, haptics: true, penalties: true, intSpot: 'spot', qbRun: 'always', fractionalScale: false, scanlines: false,
   sfx: true, music: true, autoPull: false, runoff: 10, playStyle: 'classic', gameSpeed: 'normal', aimSens: 'medium', passView: 'field', readAids: false, cfgVer: 23,
 });
 FF.load = function (key, fallback) { try { const v = localStorage.getItem('ff94_' + key); return v ? JSON.parse(v) : fallback; } catch (e) { return fallback; } };
@@ -7880,7 +7974,7 @@ FF.career = (function () {
   // Pro Bowler by the end of season one, Superstar in season three, Hall of Famer in season five.
   const LEVELS = [
     { xp: 0, title: 'ROOKIE' }, { xp: 300, title: 'BACKUP' }, { xp: 800, title: 'STARTER' }, { xp: 1500, title: 'PLAYMAKER' },
-    { xp: 2500, title: 'PRO BOWLER' }, { xp: 3800, title: 'ALL-PRO' }, { xp: 5500, title: 'MVP' }, { xp: 7500, title: 'SUPERSTAR' },
+    { xp: 2500, title: 'ALL-STAR' }, { xp: 3800, title: 'ALL-PRO' }, { xp: 5500, title: 'MVP' }, { xp: 7500, title: 'SUPERSTAR' },
     { xp: 10000, title: 'LEGEND' }, { xp: 13000, title: 'HALL OF FAMER' },
   ];
   function levelOf(totalXp) {
@@ -8155,7 +8249,7 @@ FF.legends = (function () {
   /* -------------------------------------------------- legacy score */
   // Career XP is the backbone (it already carries the difficulty multiplier); awards, rings, milestones, longevity,
   // peak level and the big counting stats are layered on top.
-  const AWARD_PTS = { 'LEAGUE MVP': 40, 'ALL-PRO': 20, 'PRO BOWL': 8, 'CHAMPIONSHIP RING': 35, 'COACH OF THE YEAR': 4 };
+  const AWARD_PTS = { 'LEAGUE MVP': 40, 'ALL-PRO': 20, 'ALL-STAR': 8, 'PRO BOWL': 8, 'CHAMPIONSHIP RING': 35, 'COACH OF THE YEAR': 4 };
   function legacy(c) {
     const s = c.careerStats || {}; const parts = [];
     const add = (label, v) => { v = Math.round(v); if (v) parts.push([label, v]); };
@@ -8357,7 +8451,7 @@ FF.legends = (function () {
       FF.text(x, '5-ON-5  *  NO CONTACT  *  PULL THE FLAG', 160, 76, { font: FONT3x5, color: '#cfd8ff', align: 'center' });
       if (Math.floor(t * 2) % 2 === 0) { FF.rect(x, 110, 186, 100, 12, 'rgba(0,0,0,0.75)'); FF.text(x, FF.touch && FF.touch.active ? 'TAP TO START' : 'PRESS ENTER', 160, 188, { scale: 1, color: '#fff', outline: '#000', align: 'center' }); }
       FF.rect(x, 0, H - 16, W, 16, 'rgba(0,0,0,0.75)');
-      FF.text(x, 'ATTRACT MODE: ' + this.demo.teams[0].name + ' VS ' + this.demo.teams[1].name, 160, H - 14, { font: FONT3x5, color: '#aaa', align: 'center' });
+      FF.text(x, 'NOW PLAYING: ' + this.demo.teams[0].name + ' VS ' + this.demo.teams[1].name, 160, H - 14, { font: FONT3x5, color: '#aaa', align: 'center' });
       FF.text(x, 'AN ORIGINAL 16-BIT STYLE GAME. NO LICENSED TEAMS OR PLAYERS.', 160, H - 7, { font: FONT3x5, color: '#777', align: 'center' });
     },
   };
@@ -8563,6 +8657,7 @@ FF.legends = (function () {
         ['READ AIDS (RINGS, TAGS)', s.readAids === false ? 'OFF' : 'ON', () => { s.readAids = s.readAids === false; }, 'classic'],
         ['THROW AIM', { low: 'LOW SENSITIVITY', medium: 'MEDIUM', high: 'HIGH SENSITIVITY' }[s.aimSens] || 'MEDIUM', v => { const o = ['low', 'medium', 'high']; s.aimSens = o[FF.clamp(o.indexOf(s.aimSens || 'medium') + v, 0, 2)]; }, 'retro'],
         ['HALF LENGTH', s.halfMinutes + ' MIN', v => { const o = [2, 4, 6, 10]; s.halfMinutes = o[FF.clamp(o.indexOf(s.halfMinutes) + v, 0, 3)]; }],
+        ...(window.NATIVE && NATIVE.on ? [['HAPTICS', s.haptics === false ? 'OFF' : 'ON', v => { s.haptics = s.haptics === false; }]] : []),
         ['DIFFICULTY', FF.diffName(s.difficulty), v => { s.difficulty = FF.clamp(s.difficulty + v, 0, 3); }],
         ...(s.difficulty === 3 ? [['DYNAMIC LEVEL', String(FF.dynWins() + 1) + ' / ' + FF.DYN_MAX, v => { s.dynWins = FF.clamp(FF.dynWins() + v, 0, FF.DYN_MAX - 1); }]] : []),
         ['DOWNS TO CROSS MIDFIELD', String(s.downsToCross), v => { s.downsToCross = FF.clamp(s.downsToCross + v, 3, 4); }],
@@ -8728,13 +8823,13 @@ FF.legends = (function () {
         'LEFT THUMB: A FLOATING STICK MOVES YOUR PLAYER.',
         'RIGHT THUMB: BUTTONS LABELED FOR THE MOMENT - SNAP, JUKE,',
         'SPIN, PULL, SWAT, DIVE, SPRINT (HOLD), SWITCH, AUD.',
-        'THROW: TAP A RECEIVER WINDOW, OR THE RECEIVER HIMSELF WITH',
-        'OPTIONS > PASSING > TAP RECEIVER. TAP = LOB, HOLD = BULLET.',
+        'THROW: TAP THE RECEIVER ON THE FIELD (OR HIS WINDOW, WITH',
+        'OPTIONS > PASSING > WINDOWS). TAP = LOB, HOLD = BULLET.',
         'SPRINT LASTS ~3 SECONDS A PLAY - WATCH THE BAR UNDER YOU.',
         'PLAY CALLING: TAP A TILE. FLIP / NO HUDDLE / RESET ARE THE',
         'BUTTONS ABOVE THE GRID. PLAY ART SHOWS THE CALL ON THE FIELD.',
         'MENUS: TAP A ROW, - / + TO CHANGE A SETTING. OK AND BACK ARE',
-        'THE CORNER BUTTONS. MENU PAUSES. FULL GOES FULL SCREEN.',
+        (window.NATIVE && NATIVE.on) ? 'THE CORNER BUTTONS. MENU PAUSES THE GAME.' : 'THE CORNER BUTTONS. MENU PAUSES. FULL GOES FULL SCREEN.',
       ],
       'RETRO PLAY STYLES': [
         'OPTIONS > PLAY STYLE: RETRO SIDELINE (A LOW CAMERA ON THE',
@@ -9484,6 +9579,7 @@ FF.legends = (function () {
       c.trust = FF.clamp((c.trust == null ? 50 : c.trust) + this.trustDelta, 0, 100);
       this.roleChange = roleOf(c.trust).name !== roleBefore.name ? roleOf(c.trust) : null;
       this.bestPlays = pg.filter(p => p.pts >= 4).length; this.badPlays = pg.filter(p => p.pts <= 1).length; this.nPlays = pg.length;
+      if (!capBefore && isCaptain(c) && window.NATIVE && NATIVE.gc) NATIVE.gc.achieve('captain');
       if (!capBefore && isCaptain(c) && !(c.captainOf || []).includes(c.teamId)) { c.captainOf = (c.captainOf || []).concat([c.teamId]); c.captainEver = true; const b = 100; c.xp += b; c.careerStats.xp += b; c.awards.push({ name: 'NAMED CAPTAIN OF THE ' + D.teamById(c.teamId).name, season: c.season, xp: b }); bonuses.push(['NAMED TEAM CAPTAIN', b]); this.total += 0; xp += b; }
       const gpaGrade = v => v >= 3.85 ? 'A+' : v >= 3.5 ? 'A' : v >= 3.15 ? 'B+' : v >= 2.85 ? 'B' : v >= 2.5 ? 'C+' : v >= 2.15 ? 'C' : v >= 1.5 ? 'D' : 'F';
       this.grade = this.gpa != null && pg.length >= 6 ? gpaGrade(this.gpa) : C.gameGrade(g.starXP, win, c.star.pos, g.settings.halfMinutes);
@@ -9632,6 +9728,7 @@ FF.legends = (function () {
   S.hallOfFame = {
     enter(args) {
       this.args = args || {}; this.tab = 0; this.scroll = 0; this.rows = FF.legends.local();
+      if (window.NATIVE && NATIVE.on) NATIVE.gc.status();
       if (FF.legends.available()) FF.legends.fetchGlobal();
     },
     list() { return this.tab === 0 ? this.rows : (FF.legends.global.rows || []); },
@@ -9639,14 +9736,24 @@ FF.legends = (function () {
       const n = this.list().length;
       if (input.pressed('LEFT') || input.pressed('RIGHT')) { this.tab = this.tab ? 0 : 1; this.scroll = 0; FF.audio.play('tick'); }
       if (input.pressed('DOWN')) this.scroll = Math.min(Math.max(0, n - 12), this.scroll + 1); if (input.pressed('UP')) this.scroll = Math.max(0, this.scroll - 1);
+      if (this.tab === 1 && window.NATIVE && NATIVE.on && NATIVE.gc.ready) { if (input.pressed('A')) { NATIVE.gc.showLeaderboard(); return; } if (input.pressed('B')) { NATIVE.gc.showAchievements(); return; } }
       if (back(input) || confirm(input)) FF.go(this.args.from === 'menu' ? 'mainmenu' : 'superstar');
     },
     draw(x, t) {
       UI.bg(x); header(x, 'HALL OF FAME');
-      const tabs = ['THIS DEVICE', 'ALL PLAYERS'];
+      const native = window.NATIVE && NATIVE.on;
+      const tabs = ['THIS DEVICE', native ? 'GAME CENTER' : 'ALL PLAYERS'];
       tabs.forEach((tb, i) => { const on = this.tab === i; const px = 80 + i * 100; FF.rect(x, px, 30, 92, 12, on ? '#ffe14a' : '#2a2a3a'); FF.text(x, tb, px + 46, 33, { font: FONT3x5, color: on ? '#000' : '#ddd', align: 'center' }); FF.tapZone(px, 28, 92, 16, on ? [] : ['RIGHT'], tb); });
       const G = FF.legends.global; const rows = this.list();
-      if (this.tab === 1 && !FF.legends.available()) { FF.text(x, 'THE SHARED LEADERBOARD LIVES IN THE CLAUDE.AI VERSION OF THE GAME.', W / 2, 90, { font: FONT3x5, color: '#ddd', align: 'center' }); FF.text(x, 'CAREERS RETIRED HERE ARE RANKED ON THIS DEVICE.', W / 2, 100, { font: FONT3x5, color: '#aaa', align: 'center' }); }
+      if (this.tab === 1 && native) {
+        const gc = NATIVE.gc; const on = Math.floor(t * 2) % 2 === 0;
+        FF.text(x, 'EVERY RETIRED SUPERSTAR POSTS HIS LEGACY SCORE TO THE', W / 2, 78, { font: FONT3x5, color: '#ddd', align: 'center' });
+        FF.text(x, 'GAME CENTER HALL OF FAME LEADERBOARD.', W / 2, 88, { font: FONT3x5, color: '#ddd', align: 'center' });
+        if (gc.ready) { FF.rect(x, 96, 104, 128, 18, on ? '#ffe14a' : '#e8c83a'); FF.text(x, 'OPEN LEADERBOARD', W / 2, 110, { color: '#000', align: 'center' }); FF.tapZone(96, 104, 128, 18, ['A'], 'LEADERBOARD');
+          FF.rect(x, 96, 128, 128, 18, '#2a2a3a'); FF.text(x, 'ACHIEVEMENTS', W / 2, 134, { color: '#fff', align: 'center' }); FF.tapZone(96, 128, 128, 18, ['B'], 'ACHIEVEMENTS'); }
+        else FF.text(x, 'SIGN IN TO GAME CENTER IN THE SETTINGS APP TO JOIN THE BOARD.', W / 2, 112, { font: FONT3x5, color: '#ffe14a', align: 'center' });
+      }
+      else if (this.tab === 1 && !FF.legends.available()) { FF.text(x, 'THE SHARED LEADERBOARD LIVES IN THE CLAUDE.AI VERSION OF THE GAME.', W / 2, 90, { font: FONT3x5, color: '#ddd', align: 'center' }); FF.text(x, 'CAREERS RETIRED HERE ARE RANKED ON THIS DEVICE.', W / 2, 100, { font: FONT3x5, color: '#aaa', align: 'center' }); }
       else if (this.tab === 1 && G.status === 'loading') FF.text(x, 'LOADING THE LEAGUE BOARD...', W / 2, 90, { font: FONT3x5, color: '#ddd', align: 'center' });
       else if (this.tab === 1 && G.status === 'error') FF.text(x, 'COULD NOT REACH THE BOARD (' + (G.err || 'ERROR') + ')', W / 2, 90, { font: FONT3x5, color: '#ff9a6a', align: 'center' });
       else if (!rows.length) FF.text(x, this.tab === 0 ? 'NO RETIRED CAREERS YET. RETIRE A SUPERSTAR TO BE RANKED HERE.' : 'NOBODY HAS RETIRED A CAREER YET. BE THE FIRST.', W / 2, 90, { font: FONT3x5, color: '#aaa', align: 'center' });
@@ -9677,7 +9784,7 @@ FF.legends = (function () {
       const awards = [];
       if (ratio >= 1.25 && madePlayoffs) awards.push({ name: 'LEAGUE MVP', xp: 500 });
       else if (ratio >= 1.05) awards.push({ name: 'ALL-PRO', xp: 300 });
-      else if (ratio >= 0.8) awards.push({ name: 'PRO BOWL', xp: 150 });
+      else if (ratio >= 0.8) awards.push({ name: 'ALL-STAR', xp: 150 });
       if (c.playoffs && c.playoffs.round === 'CHAMPION') awards.push({ name: 'CHAMPIONSHIP RING', xp: 200 });
       const rec = C.userRecord(c);
       if (rec[0] >= 6) awards.push({ name: 'COACH OF THE YEAR', xp: 100 });
@@ -9696,7 +9803,7 @@ FF.legends = (function () {
       FF.text(x, 'RECORD ' + this.rec[0] + '-' + this.rec[1] + '   SEED ' + (c.playoffs && c.playoffs.seed || '-') + '   ' + (c.playoffs.round === 'CHAMPION' ? 'CHAMPIONS!' : c.playoffs.lostIn ? 'LOST IN THE ' + c.playoffs.lostIn : 'MISSED THE PLAYOFFS'), W / 2, 34, { font: FONT3x5, color: '#fff', align: 'center' });
       if (champ) FF.text(x, 'LEAGUE CHAMPION: ' + champ.city + ' ' + champ.name, W / 2, 44, { font: FONT3x5, color: '#ffe14a', align: 'center' });
       FF.text(x, 'AWARDS', 12, 58, { color: '#ffe14a', outline: '#000' });
-      if (!this.awards.length) { FF.text(x, 'NONE THIS SEASON.', 12, 70, { font: FONT3x5, color: '#aaa' }); FF.text(x, 'PRO BOWL AT 80% OF PAR, ALL-PRO 105%,', 12, 78, { font: FONT3x5, color: '#777' }); FF.text(x, 'MVP 125% PLUS A PLAYOFF BERTH.', 12, 86, { font: FONT3x5, color: '#777' }); }
+      if (!this.awards.length) { FF.text(x, 'NONE THIS SEASON.', 12, 70, { font: FONT3x5, color: '#aaa' }); FF.text(x, 'ALL-STAR AT 80% OF PAR, ALL-PRO 105%,', 12, 78, { font: FONT3x5, color: '#777' }); FF.text(x, 'MVP 125% PLUS A PLAYOFF BERTH.', 12, 86, { font: FONT3x5, color: '#777' }); }
       this.awards.forEach((a, i) => { FF.text(x, a.name, 12, 70 + i * 11, { color: '#fff', outline: '#000' }); FF.text(x, '+' + a.xp, 160, 70 + i * 11, { color: '#8cf38c', outline: '#000', align: 'right' }); });
       FF.text(x, 'PLAY XP ' + (c.seasonPlayXP || 0) + ' = ' + Math.round(this.ratio * 100) + '% OF PAR', 12, 120, { font: FONT3x5, color: '#ddd' });
       FF.text(x, 'SEASON XP ' + (c.seasonXP || 0) + '   GOALS MET ' + this.goalsDone + ' OF ' + (c.goals || []).length, 12, 128, { font: FONT3x5, color: '#ddd' });
@@ -10705,10 +10812,12 @@ FF.legends = (function () {
     requestAnimationFrame(frame);
   }
   window.addEventListener('error', e => {
+    if (window.NATIVE && NATIVE.on) { console.error(e.message, e.filename, e.lineno); return; }   // the app never shows a developer error box
     const box = document.getElementById('err'); if (box) { box.style.display = 'block'; box.textContent = 'Error: ' + e.message + ' (' + (e.filename || '').split('/').pop() + ':' + e.lineno + ')'; }
   });
   if (FF.sheet) FF.sheet.load();   // pre-rendered player sprites (procedural fallback until decoded)
   FF.go('title');
+  if (window.NATIVE && NATIVE.on) NATIVE.start();
   requestAnimationFrame(frame);
 })();
 

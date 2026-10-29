@@ -1,0 +1,69 @@
+# Codemagic cloud build for the Flag Football '94 iPhone / iPad app (no Mac needed).
+# It builds the Capacitor app in native/, signs it with your Apple account through an App Store Connect
+# API key, and uploads it to App Store Connect, where it shows up in TestFlight.
+#
+# One-time setup (see appstore/CODEMAGIC_SETUP.md):
+#   1. Team settings > Team integrations > Developer Portal: add your App Store Connect API key and name it  ff94
+#   2. Environment variables: group  ios_signing  with the secret  CERTIFICATE_PRIVATE_KEY
+# Start a build with "Start new build" in Codemagic, or push a tag that starts with ios- (ios-1.0-b1, say).
+
+workflows:
+  ios-testflight:
+    name: iOS → TestFlight
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    integrations:
+      app_store_connect: ff94
+    environment:
+      groups:
+        - ios_signing
+      vars:
+        BUNDLE_ID: com.jarmold.flagfootball94
+        XCODE_PROJECT: native/ios/App/App.xcodeproj
+        XCODE_SCHEME: App
+      xcode: latest
+      node: 22
+    triggering:
+      events:
+        - tag
+      tag_patterns:
+        - pattern: 'ios-*'
+          include: true
+    scripts:
+      - name: Install the web layer and sync it into the iOS project
+        script: |
+          cd native
+          npm ci
+          npx cap sync ios
+      - name: Set the build number
+        script: |
+          # Codemagic's per-workflow build counter: every upload gets a higher build number
+          sed -i '' "s/CURRENT_PROJECT_VERSION = [0-9]*;/CURRENT_PROJECT_VERSION = $BUILD_NUMBER;/g" "$XCODE_PROJECT/project.pbxproj"
+          grep -m1 "CURRENT_PROJECT_VERSION" "$XCODE_PROJECT/project.pbxproj"
+      - name: Set up the signing keychain
+        script: keychain initialize
+      - name: Fetch or create the App Store certificate and profile
+        script: |
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --certificate-key=@env:CERTIFICATE_PRIVATE_KEY \
+            --create
+      - name: Install the certificate and profile
+        script: |
+          keychain add-certificates
+          xcode-project use-profiles --project "$XCODE_PROJECT"
+      - name: Build the signed app (.ipa)
+        script: |
+          xcode-project build-ipa \
+            --project "$XCODE_PROJECT" \
+            --scheme "$XCODE_SCHEME"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
+    publishing:
+      app_store_connect:
+        auth: integration
+        # the build lands in TestFlight for you and your internal testers; flip this to true once the
+        # TestFlight "Test Information" page is filled in, to also send it to external (friend) testers
+        submit_to_testflight: false

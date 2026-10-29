@@ -1,0 +1,16 @@
+{
+  "appId": "com.jarmold.flagfootball94",
+  "appName": "Flag Football '94",
+  "webDir": "www",
+  "backgroundColor": "#0b0b14",
+  "ios": {
+    "contentInset": "never",
+    "scrollEnabled": false,
+    "allowsLinkPreview": false,
+    "backgroundColor": "#0b0b14",
+    "preferredContentMode": "mobile"
+  },
+  "plugins": {
+    "SplashScreen": { "launchShowDuration": 600, "launchAutoHide": true, "backgroundColor": "#0b0b14", "showSpinner": false }
+  }
+}

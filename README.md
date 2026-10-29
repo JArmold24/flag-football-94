@@ -1,4 +1,4 @@
-# Flag Football '94 — PC & phone build (v0.28)
+# Flag Football '94 — PC, phone & iOS build (v0.29)
 
 A 16-bit style 5-on-5 flag football game built from the design document, with the
 Madden '94 play-calling grid, passing windows, and camera, plus a **Superstar** career mode.
@@ -118,6 +118,23 @@ Rebuild the sheet with `cd tools/prerender && npm install && node render.js` (ne
 - Score strip with team emblems and a possession arrow; receiver windows centered; dust on cuts,
   spins and dives; the pulled flag tumbles away; screen shake on a sack; scene fades; play-call
   diagrams no longer spill out of their tiles; menus sit over a dusk stadium.
+
+## v0.29 — the iPhone & iPad app
+The game now ships as a native iOS app (Capacitor 8, in `native/` of the GitHub repo), built in the cloud by
+Codemagic (`codemagic.yaml`) — no Mac needed. See `appstore/CODEMAGIC_SETUP.md` to connect it and
+`appstore/APP_STORE_LISTING.md` for everything App Store Connect asks for.
+- **Native saves.** Every save is mirrored into iOS native storage and restored automatically if iOS ever clears
+  the web storage.
+- **Game Center.** Retiring a Superstar posts his legacy to the *Hall of Fame Legacy* leaderboard; 12 career
+  achievements unlock as you play. The Hall of Fame screen opens the Game Center views.
+- **Haptics** on catches, flag pulls, picks, touchdowns and the buzzer (OPTIONS → HAPTICS), during games only.
+- **Built for the phone.** Touch controls from the first frame, no browser full-screen button, status bar and home
+  indicator hidden, edge swipes deferred so a thumb near the edge doesn't pull down Control Center, the screen
+  stays awake while you play, landscape only, no text selection or bounce, no on-screen error box.
+- **Text pass for the store.** "Pro Bowl" is now **ALL-STAR** (award and career level; old saves keep their points),
+  the title's attract-mode label reads NOW PLAYING, and the touch how-to matches the app.
+- Privacy policy (`privacy.html`: no data collected) and a support page (`support.html`) on GitHub Pages.
+- The browser, PWA and claude.ai builds are unchanged: the native layer (`src/native.js`) does nothing outside the app.
 
 ## v0.28 — a CPU that reads the situation, DYNAMIC difficulty, and a full Superstar career
 
