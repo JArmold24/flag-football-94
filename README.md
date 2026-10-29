@@ -1,4 +1,4 @@
-# Flag Football '94 — PC, phone & iOS build (v0.32)
+# Flag Football '94 — PC, phone & iOS build (v0.33)
 
 A 16-bit style 5-on-5 flag football game built from the design document, with the
 Madden '94 play-calling grid, passing windows, and camera, plus a **Superstar** career mode.
@@ -118,6 +118,30 @@ Rebuild the sheet with `cd tools/prerender && npm install && node render.js` (ne
 - Score strip with team emblems and a possession arrow; receiver windows centered; dust on cuts,
   spins and dives; the pulled flag tumbles away; screen shake on a sack; scene fades; play-call
   diagrams no longer spill out of their tiles; menus sit over a dusk stadium.
+
+## v0.33 — a real catch, and a smoother run
+**The catch.** It was two to four frames with planted feet and no reaction before the ball arrived. Now the
+receiver plays the ball from the moment he reads it:
+- **Tracking it.** On a ball he can't see coming (anything from behind or beside him) he runs with his head turned
+  back over the near shoulder until it's close.
+- **Reaching.** The last 0.4 s of the flight his hands come up for it, on the run: over the shoulder (ball from
+  behind), out to the side with the body turned (ball from the side), hands up or out in front (facing it),
+  or a one-hand stretch when the ball is off his line. Left and right versions of each.
+- **The catch.** Five frames: hands close on the ball, pull it down, cradle it, tuck it and go, with the legs
+  still striding; a planted version for a receiver who has stopped; and a leap over a defender sitting on the
+  landing spot (he can't push off while he's in the air). Ball-in-hand frames show the ball in the palm, not
+  tucked.
+- The reach and the catch are chosen by the same read of his heading and the ball's path, so they always match.
+  Interceptions use the same catches (a pick from a leap is the leap).
+- A catch on the run keeps half his speed instead of a third, with a shorter gather.
+
+**The run.** Sixteen frames per stride (was twelve), so a sprint steps through them at ~30 fps. The knee folds
+through the recovery, the arms pump from the hip to chin height with the elbow closing on the way forward, and the
+body bob is snapped to whole pixels, lowest at mid-stance and highest in flight, so the figure moves instead of
+shimmering.
+
+**Smaller file.** The sprite sheet is packed as a palette PNG (lossless) and its frame table as a binary blob:
+with 87% more frames, the single-file game dropped from 6.3 MB to 3.9 MB.
 
 ## v0.32 — deep balls that lead the man
 Deep lobs were landing short, and accuracy had nothing to do with it. Three causes, all fixed:
