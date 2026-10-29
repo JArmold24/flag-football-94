@@ -4245,6 +4245,19 @@ FF.Sim = (function () {
         const cx = FF.clamp(rx, 1.2, F.FW - 1.2), cy = Math.min(ry, F.FL - 1.5);
         out.push({ x: cx, y: cy, sideline: Math.abs(cx - rx) > 0.3 || cy < ry - 0.3 });
       }
+      // a vertical route doesn't stop at its last mark: a GO, SEAM, POST or the deep leg of a double move keeps
+      // running on the same line toward the back of the end zone (so a deep ball can lead him in stride)
+      const pts = out.filter(w => w.x != null);
+      const last = pts[pts.length - 1];
+      if (last && !last.sideline) {
+        const prev = pts.length > 1 ? pts[pts.length - 2] : { x: p.tx, y: p.ty };
+        const dx = last.x - prev.x, dy = last.y - prev.y, l = Math.hypot(dx, dy);
+        const endY = F.FL - 1.5;
+        if (dy >= 6 && dy >= Math.abs(dx) * 1.5 && endY - last.y > 2) {
+          const t = (endY - last.y) / (dy / l);
+          out.push({ x: FF.clamp(last.x + dx / l * t, 1.2, F.FW - 1.2), y: endY, stretch: true, sideline: true });
+        }
+      }
       return out;
     }
     expandRunPath(play, p) {
@@ -4337,7 +4350,7 @@ FF.Sim = (function () {
       if (!this.humanSide) return;
       if (this.star) {
         this.controlled = this.players.find(p => p.info.id === this.star.id && p.side === this.humanSide) || null;
-        if (this.controlled && this.controlled.route && this.controlled.side === 'off') this.routeGuide = [[this.controlled.tx, this.controlled.ty]].concat(this.controlled.route.filter(w => w.x != null).map(w => [w.x, w.y]));
+        if (this.controlled && this.controlled.route && this.controlled.side === 'off') this.routeGuide = [[this.controlled.tx, this.controlled.ty]].concat(this.controlled.route.filter(w => w.x != null && !w.stretch).map(w => [w.x, w.y]));
         return;
       }
       if (this.humanSide === 'off') this.controlled = this.qb;
@@ -4390,7 +4403,7 @@ FF.Sim = (function () {
     // SUPERSTAR play grades: how well the star did his job on the play (route discipline, getting open, his coverage man)
     trackStar() {
       const me = this.controlled; if (!me) return;
-      const T = this.starTrack || (this.starTrack = { route: me.side === 'off' && me !== this.qb && me.route ? me.route.filter(w => w.x != null).map(w => [w.x, w.y]) : [], hit: 0, assign: me.side === 'def' && me.assign ? { type: me.assign.type, target: me.assign.target || null } : null });
+      const T = this.starTrack || (this.starTrack = { route: me.side === 'off' && me !== this.qb && me.route ? me.route.filter(w => w.x != null && !w.stretch).map(w => [w.x, w.y]) : [], hit: 0, assign: me.side === 'def' && me.assign ? { type: me.assign.type, target: me.assign.target || null } : null });
       if (!this.thrown && T.hit < T.route.length) { const w = T.route[T.hit]; if (FF.dist(me.x, me.y, w[0], w[1]) < 1.8) T.hit++; }
     }
 
@@ -4779,8 +4792,11 @@ FF.Sim = (function () {
             const r = this.labels[L]; if (!r) continue; const K = THROW_KEY[L];
             if (input.pressed(K)) { this.holdL = L; this.holdT = 0; if (!onField && !this.windowsOpen) { this.windowsOpen = true; this.windowsClosedByUser = false; } }
             if (this.holdL === L) {
-              if (input.down(K)) { this.holdT += dt; if (this.holdT >= 0.2) { this.throwTo(r, 'bullet', input.axis()); this.holdL = null; } }
-              else if (input.released(K)) { this.throwTo(r, 'lob', input.axis()); this.holdL = null; }
+              // keyboard: an arrow held at the release leads him that way; on a touch screen the stick is the QB's
+              // legs (drifting back in the pocket), so it never moves the throw
+              const stickLead = FF.touch && FF.touch.active ? null : input.axis();
+              if (input.down(K)) { this.holdT += dt; if (this.holdT >= 0.2) { this.throwTo(r, 'bullet', stickLead); this.holdL = null; } }
+              else if (input.released(K)) { this.throwTo(r, 'lob', stickLead); this.holdL = null; }
             }
           }
         } else if (p.hasBall) {
@@ -4877,11 +4893,20 @@ FF.Sim = (function () {
           // he reads the ball a beat after the release: until then he keeps running his route (where a perfect throw
           // goes), so a badly led ball can end up out of his reach
           if (b.t < 0.28 && p.state === 'route' && p.route) { this.followPath(p, p.route, 0.92, dt); return; }
-          const late = FF.dist(p.x, p.y, b.lx, b.ly) / p.maxSpeed > (b.T - b.t);
-          p.sprint = late; this.moveToward(p, b.lx, b.ly, 1);
+          // track it in stride: hold the pace that gets him to the spot as the ball arrives (sprinting if he must),
+          // rather than racing there and pulling up to wait
+          // a deep ball (long in the air) is tracked in stride: he holds the pace that gets him to the spot a beat
+          // before the ball, rather than racing there and pulling up to wait. A short throw: he goes straight to it.
+          const dl = FF.dist(p.x, p.y, b.lx, b.ly), remain = b.T - b.t, deepBall = b.T > 1.4;
+          if (deepBall) {
+            const need = dl / Math.max(0.05, remain - 0.12);
+            p.sprint = need > p.maxSpeed * 0.98 && p.stamina > 0.05;
+            this.moveToward(p, b.lx, b.ly, p.sprint ? 1 : FF.clamp(need / p.maxSpeed, 0.75, 1));
+          } else { p.sprint = dl / p.maxSpeed > remain; this.moveToward(p, b.lx, b.ly, 1); }
           if (!p.isHuman || p !== this.controlled || this.retro) {
-            const u = b.t / b.T; const dd = FF.dist(p.x, p.y, b.lx, b.ly);
-            if (u > 0.75 && dd > 0.9 && dd < 2.4 && p.state !== 'dive' && rnd.chance(0.5)) this.dive(p);
+            const u = b.t / b.T;
+            const cantReach = dl > remain * p.maxSpeed * 1.22 + 0.3;            // in stride on a deep ball: dive only if he won't get there
+            if (u > 0.75 && dl > 0.9 && dl < 2.4 && p.state !== 'dive' && (!deepBall || cantReach) && rnd.chance(0.5)) this.dive(p);
           }
         } else { p.sprint = false; this.moveToward(p, b.lx, b.ly, 0.45); }
         return;
@@ -5135,7 +5160,18 @@ FF.Sim = (function () {
       for (let i = 0; i < 6; i++) {
         const dd = FF.dist(qb.x, qb.y, lx, ly);
         const T = this.flightT(qb, dd, kind);
-        const q = this.predictReceiver(r, qb.isHuman ? T : T * (0.84 + 0.14 * this.diff.cpuRead)); lx = q[0]; ly = q[1];   // a CPU passer's lead is a touch short (less so on All-Pro)
+        // a CPU passer's lead is a touch short (less so on All-Pro): a fixed fraction of a second, sized like a
+        // bullet's flight, so a long lob isn't punished more than a short throw
+        const q = this.predictReceiver(r, qb.isHuman ? T : T - (0.16 - 0.14 * this.diff.cpuRead) * Math.min(T, 1.2)); lx = q[0]; ly = q[1];
+      }
+      // a lob leads him more than a bullet: on top of meeting him where he'll be, it is dropped a little further along
+      // his path (more on a longer throw, scaled by how fast he is running), so he catches it in stride
+      if (kind === 'lob') {
+        const dd0 = FF.dist(qb.x, qb.y, lx, ly), T0 = this.flightT(qb, dd0, kind);
+        const a = this.predictReceiver(r, T0 - 0.15), z = this.predictReceiver(r, T0);
+        const hx = z[0] - a[0], hy = z[1] - a[1], hl = Math.hypot(hx, hy);
+        const spd = hl / 0.15, frac = FF.clamp(spd / (r.maxSpeed * 1.22), 0, 1);
+        if (hl > 0.05 && dd0 > 8) { const ex = FF.clamp(0.4 + dd0 * 0.03, 0, 1.6) * frac; lx += hx / hl * ex; ly += hy / hl * ex; }
       }
       if (lead) { lx += (lead.x || 0) * 2.5; ly += (lead.y || 0) * 2.5; }
       const ideal = [lx, ly];
@@ -7585,7 +7621,7 @@ FF.retro = (function () {
       let prev = F.proj(p.x, p.y, cam, vp); let last = prev;
       x.lineWidth = 3; x.strokeStyle = 'rgba(0,0,0,0.8)'; x.lineJoin = 'round'; x.beginPath(); x.moveTo(prev.x, prev.y);
       const pts = [];
-      for (const w of path) { const wx = w.x != null ? w.x : w[0], wy = w.y != null ? w.y : w[1]; if (wx == null || wy == null) continue; const q = F.proj(wx, wy, cam, vp); pts.push(q); x.lineTo(q.x, q.y); last = q; }
+      for (const w of path) { if (w.stretch) continue; const wx = w.x != null ? w.x : w[0], wy = w.y != null ? w.y : w[1]; if (wx == null || wy == null) continue; const q = F.proj(wx, wy, cam, vp); pts.push(q); x.lineTo(q.x, q.y); last = q; }
       x.stroke(); x.lineWidth = 1.5; x.strokeStyle = col; x.beginPath(); x.moveTo(prev.x, prev.y); for (const q of pts) x.lineTo(q.x, q.y); x.stroke();
       if (pts.length) { const q0 = pts.length > 1 ? pts[pts.length - 2] : prev; const ang = Math.atan2(last.y - q0.y, last.x - q0.x); x.fillStyle = col; x.beginPath(); x.moveTo(last.x + Math.cos(ang) * 3, last.y + Math.sin(ang) * 3); x.lineTo(last.x + Math.cos(ang + 2.5) * 3, last.y + Math.sin(ang + 2.5) * 3); x.lineTo(last.x + Math.cos(ang - 2.5) * 3, last.y + Math.sin(ang - 2.5) * 3); x.fill(); }
     }

@@ -1,4 +1,4 @@
-# Flag Football '94 — PC, phone & iOS build (v0.31)
+# Flag Football '94 — PC, phone & iOS build (v0.32)
 
 A 16-bit style 5-on-5 flag football game built from the design document, with the
 Madden '94 play-calling grid, passing windows, and camera, plus a **Superstar** career mode.
@@ -118,6 +118,31 @@ Rebuild the sheet with `cd tools/prerender && npm install && node render.js` (ne
 - Score strip with team emblems and a possession arrow; receiver windows centered; dust on cuts,
   spins and dives; the pulled flag tumbles away; screen shake on a sack; scene fades; play-call
   diagrams no longer spill out of their tiles; menus sit over a dusk stadium.
+
+## v0.32 — deep balls that lead the man
+Deep lobs were landing short, and accuracy had nothing to do with it. Three causes, all fixed:
+- **Routes stopped at their last mark.** A GO route was 24 yards long, and the throw predictor assumed the receiver
+  settled there, so every deep lob was aimed at the end of the route. He also eased off his sprint for its last 8
+  yards. Vertical routes (GO, SEAM, POST, the deep leg of a double move) now keep running on the same line toward
+  the back of the end zone. The extra leg isn't drawn in the play art or counted in Superstar route grades.
+- **He raced to the spot and waited.** Once a deep ball (more than 1.4 s in the air) is in the air, the receiver now
+  holds the pace that gets him to the spot a beat before the ball, and only dives if he can't get there. Short
+  throws work as before.
+- **The stick moved the ball on touch.** A held stick shifts the throw 2.5 yards that way, a documented keyboard
+  feature ("hold an arrow to lead him"). On a phone the stick is the QB's legs, so drifting back in the pocket while
+  tapping a receiver made the ball 2.5 yards shorter. On touch the stick no longer moves the throw.
+
+Also: a lob now leads more than a bullet. On top of meeting him where he'll be, it's dropped 0.4-1.6 yards further
+along his path, scaled by the throw's length and his speed. The CPU passer's built-in short lead is now a fixed
+fraction of a second, so it no longer grows with a lob's longer flight.
+
+| Deep lob to a GO, 2.0 s after the snap | Before | After |
+|---|---|---|
+| Lands short of him in stride (99 ACC) | 6.9 yd | 0.9 yd |
+| Receiver comes back for it | 100% | 0% |
+| Completion at 99 / 80 / 60 ACC | 28 / 20 / 22% | 75 / 70 / 53% |
+
+CPU-vs-CPU balance (completion, YAC, drops, catch depth) stays within run-to-run noise of v0.31.
 
 ## v0.31 — your button layout, a snap you can't time, a one-sided play call
 - **The touch pad, remapped.** The four buttons still never move; what they do is now:
