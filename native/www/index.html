@@ -1932,8 +1932,8 @@ FF.diffMult = d => { const L = FF.effDiff(d); return L <= 1 ? 0.8 + 0.2 * L : 1 
 <script>
 /* ---- src/store.js ---- */
 /* store.js — the free version and the Full Game unlock (iPhone / iPad app only).
-   The App Store download is free: one exhibition game to try it, then everything is part of the Full Game, a single
-   in-app purchase. Outside the app (browser, PWA, the hosted page) nothing is locked and this file changes nothing.
+   The App Store download is free: one exhibition game, and a Superstar career through draft day and his first game;
+   everything else is part of the Full Game, a single in-app purchase. Outside the app (browser, PWA, the hosted page) nothing is locked and this file changes nothing.
    Ownership comes from StoreKit (src/native.js); it is cached on the device so the game opens unlocked offline. */
 'use strict';
 
@@ -1943,15 +1943,20 @@ FF.store = (function () {
   const iap = () => (window.NATIVE && NATIVE.on && NATIVE.iap) || null;
   S.native = () => !!iap();
   S.full = () => !iap() || FF.load('unlocked', false) === true;
-  S.trialUsed = () => ((FF.load('trial', null) || {}).games | 0);
+  const trial = () => FF.load('trial', null) || {};
+  S.trialUsed = () => (trial().games | 0);
   S.trialLeft = () => S.full() ? Infinity : Math.max(0, FREE_GAMES - S.trialUsed());
-  // what is open in the free version: exhibition while the free game lasts; options and how-to always
+  S.starTrialUsed = () => !!trial().star;
+  // what is open in the free version: one exhibition game; Superstar through draft day and his first game;
+  // options and how-to always
   S.locked = what => {
     if (S.full() || what === 'options' || what === 'howto') return false;
     if (what === 'exhibition') return S.trialLeft() <= 0;
+    if (what === 'superstar') return S.starTrialUsed();
     return true;
   };
-  S.useTrial = () => { if (!S.full()) FF.save('trial', { games: S.trialUsed() + 1, when: Date.now() }); };
+  S.useTrial = () => { if (!S.full()) FF.save('trial', Object.assign(trial(), { games: S.trialUsed() + 1, when: Date.now() })); };
+  S.useStarTrial = () => { if (!S.full()) FF.save('trial', Object.assign(trial(), { star: true, starWhen: Date.now() })); };
   function setOwned(owned) {
     const was = S.full();
     FF.save('unlocked', !!owned);
@@ -4205,7 +4210,24 @@ FF.Sim = (function () {
       this.ball.holder = this.center; this.center.hasBall = true;
       // human control
       this.pickControlled(true);
-      this.cpuSnapAt += this.humanSide === 'off' ? 0 : 0.5;
+      this.cpuSnapAt = this.snapCount();
+    }
+    // When the CPU offense snaps, counted from the moment everyone is set. Against a human defense it mixes a quick
+    // count, a normal one and a long one, rarely the same twice running, so a rusher can't time the snap. A hurry-up
+    // offense snaps quickly; a team milking the clock holds it.
+    snapCount() {
+      if (this.humanSide !== 'def') return 1.0 + rnd.f() * 1.2;
+      const memo = this.snapMemo || {};
+      let w = [0.24, 0.42, 0.34];                                   // quick, normal, long
+      if (this.clockMode === 'hurry' || this.quick) w = [0.55, 0.4, 0.05];
+      else if (this.clockMode === 'milk') w = [0.04, 0.3, 0.66];
+      if (memo.last != null) w[memo.last] *= 0.4;
+      const tot = w[0] + w[1] + w[2]; let r = rnd.f() * tot, b = 0;
+      while (b < 2 && r > w[b]) { r -= w[b]; b++; }
+      memo.last = b; memo.n = (memo.n || 0) + 1;
+      const R = [[0.35, 0.8], [1.1, 2.3], this.clockMode === 'milk' ? [3.2, 5.5] : [2.5, 4.2]][b];
+      const t = R[0] + rnd.f() * (R[1] - R[0]);
+      return Math.min(t, Math.max(0.4, (this.playClockLeft || 30) - 3));
     }
     expandPath(route, side, p) {
       // returns [{x,y} absolute | {wait}]
@@ -4381,6 +4403,8 @@ FF.Sim = (function () {
         }
         if (!this.set) {
           this.huddleT += dt;
+          // the defense may change its man while everyone jogs to his mark
+          if (this.humanSide === 'def' && !this.star && !this.audible && input && input.pressed('SWITCH')) this.cycleDefender();
           if (this.huddleT < 0.45) { for (const p of this.players) { p.wantDir = [0, 0]; p.wantSpeed = 0; } }
           else {
             let all = true;
@@ -4503,6 +4527,32 @@ FF.Sim = (function () {
         this.sfxQ('blip');
       }
       this.audible = null;
+    }
+    // A defender playing a ball in the air: PICK when he is in position to take it (ahead of the receiver to the
+    // spot, underneath a bullet or over the top of a lob), SWAT when he is trailing and can only knock it away.
+    ballPlayFor(d) {
+      const b = this.ball; if (b.state !== 'air') return 'SWAT';
+      const r = b.to; const dl = FF.dist(d.x, d.y, b.lx, b.ly);
+      if (!r) return dl < 2 ? 'PICK' : 'SWAT';
+      const rl = FF.dist(r.x, r.y, b.lx, b.ly);
+      const bd = norm(b.lx - b.fx, b.ly - b.fy);
+      const along = (d.x - r.x) * bd[0] + (d.y - r.y) * bd[1];          // + beyond the receiver, - underneath
+      if (dl + 0.3 < rl) return 'PICK';
+      if (b.kind === 'bullet' && along < -0.45 && dl < 3) return 'PICK';
+      if (b.kind === 'lob' && along > 0.45 && dl < 3) return 'PICK';
+      return 'SWAT';
+    }
+    // what a 'swat' state adds to the pick and the breakup odds: a PICK leans to the interception, a SWAT to the breakup
+    // (the CPU's plays on the ball, with no choice made, keep the even split)
+    swatBonus(d, kind) {
+      if (d.state !== 'swat') return 0;
+      const m = d.ballPlay;
+      if (kind === 'lane-int') return m === 'pick' ? 0.22 : m === 'swat' ? 0.08 : 0.15;
+      if (kind === 'lane-defl') return m === 'pick' ? 0.13 : m === 'swat' ? 0.27 : 0.2;
+      if (kind === 'norec') return m === 'pick' ? 0.22 : m === 'swat' ? 0.08 : 0.15;
+      if (kind === 'contested-int') return m === 'pick' ? 0.18 : m === 'swat' ? 0.03 : 0.1;
+      if (kind === 'jumpball') return m === 'swat' ? 0.08 : m === 'pick' ? -0.04 : 0;
+      return 0;
     }
     cycleDefender() {
       const i = this.def.indexOf(this.controlled);
@@ -4745,7 +4795,7 @@ FF.Sim = (function () {
         }
       } else {
         // defender: SPACE pulls / lunges (or dives at a ball in the air), E swats, TAB switches
-        if (this.ball.state === 'air' && (input.pressed('B') || input.pressed('A'))) { this.setState(p, 'swat'); p.pose = 'swat'; p.swatT = 0.45; }
+        if (this.ball.state === 'air' && (input.pressed('B') || input.pressed('A'))) { p.ballPlay = this.ballPlayFor(p) === 'PICK' ? 'pick' : 'swat'; this.setState(p, 'swat'); p.pose = 'swat'; p.swatT = 0.45; }
         else if (input.pressed('SWITCH')) {
           if (!this.star) { const b = this.ball; const tx = b.state === 'air' ? b.lx : b.x, ty = b.state === 'air' ? b.ly : b.y; const n = this.nearest(this.def, tx, ty, null); if (n.p) { this.controlled = n.p; this.sfxQ('blip'); } }
         }
@@ -5385,7 +5435,7 @@ FF.Sim = (function () {
       else if (p.assign.type === 'man' && p.assign.target) this.moveToward(p, p.assign.target.x, p.assign.target.y + 1, 0.9);
       else this.moveToward(p, b.lx, b.ly, 0.7);
       // CPU swat/high-point timing
-      if (!p.isHuman && b.to && dd < 1.6 && b.t / b.T > 0.8 && p.state !== 'swat' && rnd.chance(0.35)) { this.setState(p, 'swat'); p.pose = 'swat'; }
+      if (!p.isHuman && b.to && dd < 1.6 && b.t / b.T > 0.8 && p.state !== 'swat' && rnd.chance(0.35)) { p.ballPlay = null; this.setState(p, 'swat'); p.pose = 'swat'; }
     }
 
     /* ------------------------------------------------- pass flight */
@@ -5404,8 +5454,8 @@ FF.Sim = (function () {
             d.laneChecked = b;
             const cov = d.info.ratings.cov / 99;
             const r = rnd.f();
-            if (r < 0.05 + cov * 0.08 + (d.state === 'swat' ? 0.15 : 0)) { this.dbgIntSrc = 'lane'; this.pf.intHow = 'lane'; this.interception(d); return; }
-            if (r < 0.4 + cov * 0.3 + (d.state === 'swat' ? 0.2 : 0)) { this.dbgDeflSrc = 'lane'; this.deflect(d); return; }
+            if (r < 0.05 + cov * 0.08 + this.swatBonus(d, 'lane-int')) { this.dbgIntSrc = 'lane'; this.pf.intHow = 'lane'; this.interception(d); return; }
+            if (r < 0.4 + cov * 0.3 + this.swatBonus(d, 'lane-defl')) { this.dbgDeflSrc = 'lane'; this.deflect(d); return; }
           }
         }
       }
@@ -5435,7 +5485,7 @@ FF.Sim = (function () {
       if (!rec) {
         if (def && dd < 0.9) {
           const cov = def.info.ratings.cov / 99;
-          const pInt = 0.10 + cov * 0.15 + (def.state === 'swat' ? 0.15 : 0) + (def.isHuman ? 0 : diff.cpuCatch);
+          const pInt = 0.10 + cov * 0.15 + this.swatBonus(def, 'norec') + (def.isHuman ? 0 : diff.cpuCatch);
           if (rnd.chance(pInt)) { this.dbgIntSrc = 'norec'; this.pf.intHow = 'norec'; this.interception(def); return; }
         }
         this.end({ type: 'incomplete', spot: this.los }); return;
@@ -5465,12 +5515,12 @@ FF.Sim = (function () {
         adv = adv * close + (1 - close) * 1;      // a defender a stride away barely matters
         this.dbgCatch.adv = adv; this.dbgCatch.rel = under ? 'under' : over ? 'over' : 'tight';
         if (adv < -0.55) {   // the defender beat him to it: a pick when he is squared up, a breakup otherwise
-          const pInt = 0.22 + cov * 0.3 + (def.state === 'swat' ? 0.1 : 0) + (dd < 0.6 ? 0.1 : 0);
+          const pInt = 0.22 + cov * 0.3 + this.swatBonus(def, 'contested-int') + (dd < 0.6 ? 0.1 : 0);
           if (rnd.chance(pInt)) { this.dbgIntSrc = 'contested'; this.pf.intHow = 'contested'; this.interception(def); return; }
           this.dbgDeflSrc = 'contested'; this.deflect(def); return;
         }
         if (adv < 0.2) {   // a true jump ball: the breakup odds slide with the advantage
-          if (rnd.chance(Math.min(0.85, 0.45 - adv))) { this.dbgDeflSrc = 'jumpball'; this.deflect(def); return; }
+          if (rnd.chance(Math.min(0.85, 0.45 - adv + this.swatBonus(def, 'jumpball')))) { this.dbgDeflSrc = 'jumpball'; this.deflect(def); return; }
           pCatch -= 0.06;
         }
         if (b.kind === 'lob' && over) rec.catchKindHint = 'over';   // went up and got it over the top
@@ -6059,7 +6109,7 @@ FF.Game = (function () {
         offPlayers: this.lineup(this.possession, 'off'), defPlayers: this.lineup(1 - this.possession, 'def'),
         los: this.los, gain: this.gainY(), down: this.down, play: off.play, formation: off.formation, flip: off.flip,
         front: def.front, variant: def.variant, humanSide: simSide, star: this.retroWatch ? null : star, difficulty: this.difficulty, settings: this.settings,
-        isConversion: !!this.conversion, stats: this.stats, quick: !!this.hurry, retro: this.retro, adapt: this.adaptive ? this.adaptive.simHints(this) : null, clockMode: (() => { const S = this.situation(); return S.hurry ? 'hurry' : S.milk ? 'milk' : null; })(),
+        isConversion: !!this.conversion, stats: this.stats, quick: !!this.hurry, snapMemo: this.snapMemo || (this.snapMemo = {}), playClockLeft: this.playClock, retro: this.retro, adapt: this.adaptive ? this.adaptive.simHints(this) : null, clockMode: (() => { const S = this.situation(); return S.hurry ? 'hurry' : S.milk ? 'milk' : null; })(),
       });
       this.hurry = false;
       this.sim.playClockLeft = this.playClock;
@@ -6887,12 +6937,19 @@ FF.ui = (function () {
     const off = game.offense(), def = game.defense();
     const offIdx = game.possession, defIdx = 1 - offIdx;
     const humanOff = ui.activeSide === 'off', humanDef = ui.activeSide === 'def';
+    // Only the human's side shows a play grid. Against the CPU the other half stays empty, except that a defense
+    // sees the offense's personnel (as it would at the line). Practice (both sides human) and the attract-mode demo
+    // (no human) keep both grids.
+    const one = ui.humanSide === 'off' || ui.humanSide === 'def';
+    const showDef = !one || ui.humanSide === 'def', showOff = !one || ui.humanSide === 'off';
     // ---- top half: defense
     teamNameText(x, def, 6, 3, 2);
-    button(x, 'RESET', 150, 4, 56, false);
-    capBox(x, def, 6, 20);
+    if (showDef) {
+      button(x, 'RESET', 150, 4, 56, false);
+      capBox(x, def, 6, 20);
+      drawGrid(x, game, ui, 'def', 20, humanDef, t);
+    }
     timeoutsBox(x, game, defIdx, 6, 64);
-    drawGrid(x, game, ui, 'def', 20, humanDef, t);
 
     // ---- LED strip
     drawLedStrip(x, game, 100);
@@ -6900,10 +6957,12 @@ FF.ui = (function () {
     teamNameText(x, off, 6, 128, 2);
     const fb = FF.sprites.footballIcon(); const nw = FF.textWidth(off.name, { scale: 2, spacing: 1 }) + 6;
     x.drawImage(fb, Math.min(6 + nw + 4, 130), 131);
-    button(x, humanOff && ui.level === 1 ? '< BACK' : 'RESET', 150, 129, 48, humanOff && ui.level === 1); button(x, 'NO HUDDLE', 202, 129, 58, false); button(x, 'FLIP', 264, 129, 48, ui.flip && humanOff);
-    capBox(x, off, 6, 146);
+    if (showOff) {
+      button(x, humanOff && ui.level === 1 ? '< BACK' : 'RESET', 150, 129, 48, humanOff && ui.level === 1); button(x, 'NO HUDDLE', 202, 129, 58, false); button(x, 'FLIP', 264, 129, 48, ui.flip && humanOff);
+      capBox(x, off, 6, 146);
+      drawGrid(x, game, ui, 'off', 146, humanOff, t);
+    } else personnelBox(x, game, 70, 150);
     timeoutsBox(x, game, offIdx, 6, 190);
-    drawGrid(x, game, ui, 'off', 146, humanOff, t);
     // hint line
     if (ui.humanSide) {
       const touch = FF.touch && FF.touch.active;
@@ -6918,6 +6977,19 @@ FF.ui = (function () {
         FF.text(x, FF.kb(short), W - 3, H - 6, { font: FONT3x5, color: '#ddd', align: 'right' });
       } else FF.text(x, FF.kb(hint), W / 2, H - 6, { font: FONT3x5, color: '#ddd', align: 'center' });
     }
+  }
+  // the CPU offense's personnel, as a defense sees it at the line: QB 1 / C 1 / RB 1 / WR 2
+  function personnelBox(x, game, px, py) {
+    const f = game.cpuOff && game.cpuOff.formation; const w = 240, h = 52;
+    FF.rect(x, px - 1, py - 1, w + 2, h + 2, '#000'); FF.panel(x, px, py, w, h, '#1c2a5a', '#5a78d0', '#0a1230');
+    FF.text(x, 'THEIR PERSONNEL', px + w / 2, py + 5, { font: FONT3x5, color: '#cfd8ff', align: 'center' });
+    if (!f) return;
+    const n = { QB: 0, C: 0, RB: 0, WR: 0 };
+    for (const k in f.slots) { const t = k.replace(/[0-9]+$/, ''); if (t in n) n[t]++; }
+    const parts = ['QB', 'C', 'RB', 'WR'].filter(k => n[k]).map(k => k + ' - ' + n[k]);
+    const str = parts.join('  /  ');
+    FF.text(x, str, px + w / 2, py + 20, { scale: 1, color: '#ffe14a', outline: '#000', align: 'center' });
+    FF.text(x, 'PICK YOUR DEFENSE ABOVE', px + w / 2, py + 38, { font: FONT3x5, color: '#9fb0e0', align: 'center' });
   }
   function drawGrid(x, game, ui, side, y0, human, t) {
     const isOff = side === 'off';
@@ -7022,7 +7094,7 @@ FF.ui = (function () {
           sub = s.inNoRunZone() ? 'NO-RUN ZONE: PASS ONLY   ARROWS: MOVE' : s.qbMayRun() ? 'ARROWS: RUN - CROSS THE LINE TO KEEP IT' : 'ARROWS: SCRAMBLE   QB RUNS ONCE A RUSHER CROSSES';
         }
         else if (c.hasBall) { hint = 'SPACE: JUKE   E: SPIN   SHIFT: SPRINT'; sub = 'ARROWS: RUN'; }
-        else if (s.ball.state === 'air') hint = 'SPACE: DIVE FOR IT   ARROWS: MOVE';
+        else if (s.ball.state === 'air') hint = FF.touch && FF.touch.active ? 'TAP CATCH TO DIVE FOR IT   STICK: MOVE' : 'SPACE: DIVE FOR IT   ARROWS: MOVE';
         else hint = s.star ? 'ARROWS: RUN ROUTE   SPACE: CALL FOR BALL' : 'ARROWS: MOVE';
       } else if (c) {
         if (s.ball.state === 'air') hint = 'SPACE: SWAT / PICK   ARROWS: MOVE';
@@ -7302,7 +7374,7 @@ FF.ui = (function () {
       return;
     }
     const lines = touch
-      ? (side === 'off' ? ['TAP SNAP TO SNAP THE BALL - THE STICK APPEARS UNDER YOUR LEFT THUMB', FF.settings.passView === 'field' ? 'TAP A RECEIVER ON THE FIELD TO THROW (HOLD = BULLET)' : 'TAP A RECEIVER WINDOW TO THROW (HOLD = BULLET)', 'RIGHT-HAND BUTTONS: JUKE, SPIN, HOLD SPRINT'] : ['STICK: MOVE   SWITCH: CHANGE PLAYER', 'RIGHT-HAND BUTTONS: PULL THE FLAG (OR LUNGE), SWAT A PASS', 'HOLD SPRINT TO RUN FASTER (~3 SECONDS A PLAY)'])
+      ? (side === 'off' ? ['TAP SNAP TO SNAP THE BALL - THE STICK APPEARS UNDER YOUR LEFT THUMB', FF.settings.passView === 'field' ? 'TAP A RECEIVER ON THE FIELD TO THROW (HOLD = BULLET)' : 'TAP A RECEIVER WINDOW TO THROW (HOLD = BULLET)', 'BOTTOM: SNAP, THEN HOLD TO SPRINT   LEFT: JUKE   RIGHT: SPIN'] : ['STICK: MOVE   RIGHT BUTTON: SWITCH PLAYER', 'LEFT: PULL THE FLAG (OR LUNGE)   TOP: PICK / SWAT A PASS', 'BOTTOM: HOLD TO SPRINT (~3 SECONDS A PLAY)'])
       : (side === 'off' ? ['SPACE: SNAP THE BALL', '1 2 3 4: THROW TO THAT RECEIVER (HOLD = BULLET)', 'ARROWS: MOVE   SPACE: JUKE   E: SPIN   SHIFT: SPRINT'] : ['ARROWS: MOVE   TAB: SWITCH PLAYER', 'SPACE: PULL THE FLAG (OR LUNGE)   E: SWAT A PASS', 'SHIFT: SPRINT']);
     lines.forEach((l, i) => FF.text(x, l, W / 2, 102 + i * 9, { font: FONT3x5, color: '#fff', align: 'center' }));
     FF.text(x, touch ? 'MENU: PAUSE / QUIT      TAP TO START' : 'ESC: PAUSE / QUIT      PRESS ANY KEY TO START', W / 2, 134, { font: FONT3x5, color: Math.floor(t * 2) % 2 ? '#cfd8ff' : '#fff', align: 'center' });
@@ -7573,12 +7645,17 @@ FF.touch = (function () {
   };
 
   function game() { const sc = FF.scenes && FF.scenes.game; return FF.currentScene === 'game' && sc && sc.game ? sc.game : null; }
-  // The right-thumb pad: four buttons in a fixed diamond (Y top, X left, B right, A bottom) that never move.
-  // Each shows, in small text, what it does right now; a slot with nothing to do stays in place, dimmed.
-  //   A  the main action: SNAP, RUN, JUKE, DIVE, PULL, PICK      B  the second action: MOTION, WINDOWS, SPIN, SWAT
-  //   X  SPRINT (hold), whenever the ball is live               Y  SWITCH to another defender
-  const PAD = { PA: 'A', PB: 'B', PX: 'SPRINT', PY: 'SWITCH' };
-  const pad = (A, Bl, X, Y, ghost) => ({ PA: A || null, PB: Bl || null, PX: X || null, PY: Y || null, ghost: ghost !== false });
+  // The right-thumb pad: four buttons in a fixed diamond that never move. Each shows, in small text, what it does
+  // right now; a slot with nothing to do stays in place, dimmed. Each slot carries its own logical button per moment:
+  //            OFFENSE                                   DEFENSE
+  //   bottom   SNAP, then SPRINT (hold)                  SPRINT (hold)
+  //   right    MOTION, then SPIN (QB: WINDOWS)           SWITCH
+  //   left     JUKE                                      PULL
+  //   top      CALL for the ball, then CATCH             PICK or SWAT (the game decides from where you are)
+  // RETRO styles: bottom BURST (or SKIP), left STUTTER, right MOTION / LOB-BULLET.
+  const PAD = { PA: 1, PB: 1, PX: 1, PY: 1 };          // PA bottom, PB right, PX left, PY top
+  const pad = (bottom, right, left, top, ghost) => ({ PA: bottom || null, PB: right || null, PX: left || null, PY: top || null, ghost: ghost !== false });
+  const padV = (ctx, k) => { const e = ctx && ctx.pad && ctx.pad[k]; return e ? e[1] : null; };
   // what the screen needs right now
   function context() {
     const g = game();
@@ -7591,34 +7668,37 @@ FF.touch = (function () {
       case 'conversion': case 'otchoice': return { name: 'choice', buttons: ['MENU'], halves: true };
       case 'playcall': return { name: 'playcall', buttons: ['MENU', 'TO'], grid: true };   // FLIP / NO HUDDLE / RESET are tappable on the screen itself
       case 'result': return { name: 'result', buttons: g.canReplay && g.canReplay() ? ['MENU', 'REP'] : ['MENU'], tapIs: 'A' };
-      case 'replay': return { name: 'replay', buttons: ['DONE', 'CAM', 'SPD'], pad: pad('PAUSE', null, null, null, false), stick: 'scrub' };
+      case 'replay': return { name: 'replay', buttons: ['DONE', 'CAM', 'SPD'], pad: pad(['PAUSE', 'A'], null, null, null, false), stick: 'scrub' };
       case 'swing': return { name: 'swing', buttons: [] };
       case 'play': {
         if (g.retro) {   // RETRO SIDELINE / OVERHEAD: one finger does the play; the pad keeps its place
-          if (!s || !s.humanSide) return { name: 'watch', buttons: s && s.phase === 'presnap' ? ['MENU', 'ART'] : ['MENU'], pad: pad('SKIP') };
+          if (!s || !s.humanSide) return { name: 'watch', buttons: s && s.phase === 'presnap' ? ['MENU', 'ART'] : ['MENU'], pad: pad(['SKIP', 'A']) };
           const c = s.controlled, pre = s.phase === 'presnap';
           if (s.audible) return { name: 'audible', buttons: ['MENU'] };
-          if (pre) { const call = !(s.mayCall && !s.mayCall('off')); return { name: 'pre-off', buttons: call ? ['MENU', 'AUD', 'ART'] : ['MENU', 'ART'], pad: pad(null, call ? (s.motion && s.motion.auto ? 'SET' : 'MOTION') : null), gesture: 'snapAim', ready: s.set && !g.intro && (s.t - s.setT) > 0.3 }; }
+          if (pre) { const call = !(s.mayCall && !s.mayCall('off')); return { name: 'pre-off', buttons: call ? ['MENU', 'AUD', 'ART'] : ['MENU', 'ART'], pad: pad(null, call ? [s.motion && s.motion.auto ? 'SET' : 'MOTION', 'B'] : null), gesture: 'snapAim', ready: s.set && !g.intro && (s.t - s.setT) > 0.3 }; }
           if (c && c.side === 'off') {
-            if (c === s.qb && (c.hasBall || s.ball.state === 'snap') && !s.handedOff && !s.qbScramble) return { name: 'qb', buttons: ['MENU'], pad: pad(null, s.lobMode ? 'LOB' : 'BULLET'), gesture: 'aim' };
-            if (c.hasBall) return { name: 'carry', buttons: ['MENU'], pad: pad('BURST', 'STUTTER'), gesture: 'steer' };
+            if (c === s.qb && (c.hasBall || s.ball.state === 'snap') && !s.handedOff && !s.qbScramble) return { name: 'qb', buttons: ['MENU'], pad: pad(null, [s.lobMode ? 'LOB' : 'BULLET', 'B']), gesture: 'aim' };
+            if (c.hasBall) return { name: 'carry', buttons: ['MENU'], pad: pad(['BURST', 'A'], null, ['STUTTER', 'B']), gesture: 'steer' };
             return { name: 'rec', buttons: ['MENU'], pad: pad() };
           }
           return { name: 'watch', buttons: ['MENU'], pad: pad() };
         }
         if (!s || !s.humanSide) return { name: 'watch', buttons: ['MENU'], tapIs: 'START' };
         const c = s.controlled, pre = s.phase === 'presnap';
+        const SPRINT = ['SPRINT', 'SPRINT'];
         if (s.audible) return { name: 'audible', buttons: ['MENU'], windows: false };
         if (pre) {
-          if (s.humanSide === 'off') { const call = !(s.mayCall && !s.mayCall('off')); return { name: 'pre-off', buttons: call ? ['MENU', 'AUD', 'ART'] : ['MENU', 'ART'], pad: pad('SNAP', call ? (s.motion && s.motion.auto ? 'SET' : 'MOTION') : null), stick: true }; }
-          return { name: 'pre-def', buttons: !s.star || s.mayCall('def') ? ['MENU', 'AUD', 'ART'] : ['MENU', 'ART'], pad: pad(null, null, null, s.star ? null : 'SWITCH'), stick: true };
+          if (s.humanSide === 'off') { const call = !(s.mayCall && !s.mayCall('off')); return { name: 'pre-off', buttons: call ? ['MENU', 'AUD', 'ART'] : ['MENU', 'ART'], pad: pad(['SNAP', 'A'], call ? [s.motion && s.motion.auto ? 'SET' : 'MOTION', 'B'] : null), stick: true }; }
+          return { name: 'pre-def', buttons: !s.star || s.mayCall('def') ? ['MENU', 'AUD', 'ART'] : ['MENU', 'ART'], pad: pad(null, s.star ? null : ['SWITCH', 'SWITCH']), stick: true };
         }
         if (c && c.side === 'off') {
-          if (c === s.qb && c.hasBall && !s.handedOff) return { name: 'qb', buttons: ['MENU'], pad: pad('RUN', FF.settings.passView === 'field' ? null : 'WINDOWS', 'SPRINT'), stick: true, windows: true };
-          if (c.hasBall) return { name: 'carry', buttons: ['MENU'], pad: pad('JUKE', 'SPIN', 'SPRINT'), stick: true };
-          return { name: 'rec', buttons: ['MENU'], pad: pad(s.ball.state === 'air' ? 'DIVE' : (s.star ? 'CALL' : 'DIVE'), null, 'SPRINT'), stick: true };
+          if (c === s.qb && c.hasBall && !s.handedOff) return { name: 'qb', buttons: ['MENU'], pad: pad(SPRINT, FF.settings.passView === 'field' ? null : ['WINDOWS', 'B']), stick: true, windows: true };
+          if (c.hasBall) return { name: 'carry', buttons: ['MENU'], pad: pad(SPRINT, ['SPIN', 'B'], ['JUKE', 'A']), stick: true };
+          const mine = s.ball.state === 'air' && s.ball.to === c;
+          return { name: 'rec', buttons: ['MENU'], pad: pad(SPRINT, null, null, mine ? ['CATCH', 'B'] : (s.star && !s.thrown ? ['CALL', 'B'] : null)), stick: true };
         }
-        return { name: 'def', buttons: ['MENU'], pad: pad(s.ball.state === 'air' ? 'PICK' : 'PULL', 'SWAT', 'SPRINT', s.star ? null : 'SWITCH'), stick: true };
+        const air = s.ball.state === 'air';
+        return { name: 'def', buttons: ['MENU'], pad: pad(SPRINT, s.star ? null : ['SWITCH', 'SWITCH'], ['PULL', 'A'], air && c ? [s.ballPlayFor ? s.ballPlayFor(c) : 'SWAT', 'B'] : null), stick: true };
       }
     }
     return { name: 'other', buttons: ['MENU'], tapIs: 'START' };
@@ -7702,7 +7782,7 @@ FF.touch = (function () {
       const at = { PA: [cx, cy + sp], PB: [cx + sp, cy], PX: [cx - sp, cy], PY: [cx, cy - sp] };
       const retro = !!ctx.gesture || (game() && game().retro);
       for (const k in PAD) {
-        const lab = P[k]; if (!lab && !P.ghost) continue;
+        const lab = P[k] ? P[k][0] : null; if (!lab && !P.ghost) continue;
         const e = btnEls[k]; e.textContent = lab || '';
         e.classList.toggle('off', !lab); e.classList.toggle('faint', !lab && retro);
         place(k, at[k][0] - r, at[k][1] - r, d, d);
@@ -7774,6 +7854,27 @@ FF.touch = (function () {
     window.dispatchEvent(new Event('resize'));
     if (navigator.wakeLock) { try { navigator.wakeLock.request('screen').catch(() => {}); } catch (e) { } }
   }
+  // Pad presses: a slot's logical button is read when the thumb lands and stays with that finger.
+  // SPRINT has a short grace (touch only): after the thumb leaves it, sprint holds GRACE seconds more, so a hop to
+  // JUKE / SPIN / PULL starts at full speed, and a move started inside that window keeps the sprint through the move.
+  // Stamina still drains, and a gassed player gets nothing from it.
+  // A thumb can also slide from one slot onto the next without lifting: the new slot fires as the thumb arrives.
+  const GRACE = 200;                     // ms
+  let graceUntil = 0;
+  function otherHolds(v, except) { for (const r of touches.values()) if (r !== except && r.role === 'button' && r.pad && r.v === v) return true; return false; }
+  const CARRY = 350;                     // ms: a move started inside the grace keeps the sprint for about its length
+  function padDown(rec, k) {
+    const v = padV(T.ctx || context(), k); rec.v = v; rec.pad = true;
+    if (v === 'SPRINT') graceUntil = 0;
+    else if (v && graceUntil && performance.now() < graceUntil) graceUntil = performance.now() + CARRY;
+    if (v) FF.input.setVirtual(v, true);
+  }
+  function padUp(rec, noGrace) {
+    const v = rec.v; rec.v = null; if (!v || otherHolds(v, rec)) return;
+    if (v === 'SPRINT' && !noGrace) { graceUntil = performance.now() + GRACE; return; }
+    FF.input.setVirtual(v, false);
+  }
+  T.GRACE = GRACE;
   // one pointer (a finger or the mouse) starts: buttons, the receiver windows, the stick, or a retro gesture
   function pStart(id, X, Y, isMouse) {
     const ctx = T.ctx || context(); const inp = FF.input;
@@ -7781,7 +7882,11 @@ FF.touch = (function () {
     const rec = { role: 'tap', x0: X, y0: Y, t0: performance.now(), moved: false, mouse: isMouse };
     if (k) {
       rec.role = 'button'; rec.btn = k; btnEls[k].classList.add('on');
-      if (rects[k] && rects[k].circle && !rects[k].live) { rec.dead = true; btnEls[k].classList.remove('on'); touches.set(id, rec); return; }
+      if (rects[k] && rects[k].circle) {
+        rec.pad = true;
+        if (!rects[k].live) { rec.dead = true; btnEls[k].classList.remove('on'); } else padDown(rec, k);
+        touches.set(id, rec); return;
+      }
       if (k === 'FS') fullscreen(); else if (k === 'TYPE') T.openKeyboard(); else if (B[k].b) inp.setVirtual(B[k].b, true);
       touches.set(id, rec); return;
     }
@@ -7813,6 +7918,17 @@ FF.touch = (function () {
     const rec = touches.get(id); if (!rec) return;
     if (Math.hypot(X - rec.x0, Y - rec.y0) > 14) rec.moved = true;
     const R = FF.input.retro;
+    if (rec.role === 'button' && rec.pad) {   // slide-through: the thumb rolls onto the next slot
+      for (const k in rects) {
+        const r = rects[k]; if (!r.circle || !r.live || k === rec.btn) continue;
+        if (Math.hypot(X - (r.x + r.w / 2), Y - (r.y + r.h / 2)) <= r.w * 0.45) {
+          btnEls[rec.btn].classList.remove('on'); padUp(rec);
+          rec.btn = k; rec.dead = false; btnEls[k].classList.add('on'); padDown(rec, k);
+          break;
+        }
+      }
+      return;
+    }
     if (rec.role === 'stick' && stick && stick.id === id) {
       let dx = X - stick.ox, dy = Y - stick.oy; const len = Math.hypot(dx, dy), max = 44;
       if (len > max) { dx *= max / len; dy *= max / len; }
@@ -7827,7 +7943,11 @@ FF.touch = (function () {
   function pEnd(id, X, Y) {
     const ctx = T.ctx || context(); const inp = FF.input; const R = inp.retro;
     const rec = touches.get(id); if (!rec) return; touches.delete(id);
-    if (rec.role === 'button') { btnEls[rec.btn] && btnEls[rec.btn].classList.remove('on'); if (!rec.dead && B[rec.btn].b) inp.setVirtual(B[rec.btn].b, false); return; }
+    if (rec.role === 'button') {
+      btnEls[rec.btn] && btnEls[rec.btn].classList.remove('on');
+      if (rec.pad) padUp(rec); else if (B[rec.btn].b) inp.setVirtual(B[rec.btn].b, false);
+      return;
+    }
     if (rec.role === 'window') { inp.setVirtual(rec.win, false); return; }
     if (rec.role === 'stick') { stick = null; stickBase.style.display = 'none'; stickKnob.style.display = 'none'; setDirs(0, 0); return; }
     if (rec.role === 'lobtap') return;
@@ -7884,7 +8004,16 @@ FF.touch = (function () {
     const g = game(); if ((!g || g.state !== 'play') && (R.aiming || R.steer || R.held)) { R.aiming = false; R.steer = null; R.held = false; }   // the play ended under the finger
     if (!T.active) return;
     const key = ctx.name + '|' + ctx.buttons.join(',') + '|' + JSON.stringify(ctx.labels || {}) + '|' + JSON.stringify(ctx.pad || null) + '|' + !!document.fullscreenElement;
-    if (key !== layoutKey) { layoutKey = key; relayout(); }
+    if (key !== layoutKey) {
+      layoutKey = key; relayout();
+      for (const rec of touches.values()) {
+        if (rec.role !== 'button' || !rec.pad) continue;
+        const v = padV(ctx, rec.btn); if (v === rec.v) continue;
+        if (rec.v) padUp(rec, true);
+        if (v === 'SPRINT') { rec.v = v; FF.input.setVirtual(v, true); }   // hold SNAP through the snap and you are sprinting
+      }
+    }
+    if (graceUntil && performance.now() >= graceUntil) { graceUntil = 0; if (!otherHolds('SPRINT')) FF.input.setVirtual('SPRINT', false); }
     // the stick is released when the context stops wanting it (a play ends mid-drag)
     if (!ctx.stick && stick) { stick = null; stickBase.style.display = 'none'; stickKnob.style.display = 'none'; setDirs(0, 0); }
   }
@@ -8568,7 +8697,7 @@ FF.legends = (function () {
       this.sel = navUpDown(input, this.sel, this.items.length);
       if (confirm(input)) {
         FF.audio.play('select');
-        if (FF.store.locked(this.gate[this.sel])) { FF.go('unlock', { reason: this.gate[this.sel] === 'exhibition' ? 'trial' : 'locked', item: this.items[this.sel] }); return; }
+        if (FF.store.locked(this.gate[this.sel])) { const g = this.gate[this.sel]; FF.go('unlock', { reason: g === 'exhibition' ? 'trial' : g === 'superstar' ? 'star' : 'locked', item: this.items[this.sel] }); return; }
         const sc = this.scenes[this.sel];
         FF.go(sc, sc === 'hallOfFame' ? { from: 'menu' } : undefined);
       }
@@ -8582,8 +8711,9 @@ FF.legends = (function () {
       if (!FF.store.full()) tbtn(x, 'UNLOCK FULL GAME', W - 82, 31, 76, ['UNLOCK'], true);
       const free = !FF.store.full();
       let desc = ['ONE GAME, ANY TWO TEAMS, YOU VS THE CPU.', 'CREATE A PLAYER AND LIVE A CAREER LOCKED TO HIM.', 'RETIRED SUPERSTARS RANKED BY LEGACY SCORE.', 'FANTASY DRAFT A TEAM, THEN COACH IT THROUGH SEASONS.', 'RUN ANY PLAY VS ANY COVERAGE, NO CLOCK.', 'EDIT ROUTES, READS AND RUNS; BUILD YOUR OWN PLAYS.', 'RENAME, RENUMBER AND RESTYLE THE PLAYERS ON ANY TEAM.', 'GAME LENGTH, RULES, DIFFICULTY, DISPLAY.', 'CONTROLS AND THE RULES OF 5-ON-5 FLAG.'][this.sel];
-      if (free && locked[this.sel]) desc = this.sel === 0 ? 'YOUR FREE GAME IS PLAYED - UNLOCK THE FULL GAME FOR MORE.' : 'PART OF THE FULL GAME - TAP TO SEE WHAT IT UNLOCKS.';
+      if (free && locked[this.sel]) desc = this.sel === 0 ? 'YOUR FREE GAME IS PLAYED - UNLOCK THE FULL GAME FOR MORE.' : this.sel === 1 ? 'HIS CAREER CONTINUES IN THE FULL GAME.' : 'PART OF THE FULL GAME - TAP TO SEE WHAT IT UNLOCKS.';
       else if (free && this.sel === 0) desc = 'FREE VERSION: ONE GAME, ANY TWO TEAMS, YOU VS THE CPU.';
+      else if (free && this.sel === 1) desc = 'FREE VERSION: CREATE YOUR PLAYER, DRAFT DAY AND HIS FIRST GAME.';
       footer(x, desc);
       FF.text(x, FF.touch && FF.touch.active ? 'TAP AN ITEM TO OPEN IT' : 'ARROWS: MOVE   ENTER: SELECT   ESC: BACK', W / 2, H - 16, { font: FONT3x5, color: '#aaa', align: 'center' });
     },
@@ -8608,10 +8738,11 @@ FF.legends = (function () {
       const full = FF.store.full(), a = this.args;
       const top = full ? 'EVERYTHING IS UNLOCKED. ENJOY THE GAME!'
         : a.reason === 'trial' ? 'THAT WAS YOUR FREE GAME - THANKS FOR PLAYING!'
+        : a.reason === 'star' ? 'HIS CAREER CONTINUES IN THE FULL GAME.'
         : a.reason === 'locked' && a.item ? a.item + ' IS PART OF THE FULL GAME.' : 'ONE PURCHASE UNLOCKS EVERYTHING.';
       FF.text(x, top, W / 2, 33, { color: '#ffe14a', outline: '#000', align: 'center' });
       const rows = [
-        ['SUPERSTAR MODE', 'YOUR CAREER, FROM DRAFT DAY TO THE HALL OF FAME'],
+        ['SUPERSTAR MODE', a.reason === 'star' ? 'EVERY SEASON AFTER HIS FIRST GAME, TO THE HALL OF FAME' : 'YOUR CAREER, FROM DRAFT DAY TO THE HALL OF FAME'],
         ['FRANCHISE MODE', 'DRAFT A TEAM AND COACH IT THROUGH SEASONS'],
         ['UNLIMITED EXHIBITION', 'ANY TWO TEAMS, ANY DIFFICULTY, ANY TIME'],
         ['PRACTICE, PLAYBOOK, ROSTERS', 'RUN ANY PLAY, BUILD YOUR OWN, EDIT ANY TEAM'],
@@ -8975,9 +9106,9 @@ FF.legends = (function () {
       'CONTROLS': [
         'TOUCH CONTROLS APPEAR WHEN A FINGER TOUCHES THE SCREEN.',
         'LEFT THUMB: A FLOATING STICK MOVES YOUR PLAYER.',
-        'RIGHT THUMB: FOUR BUTTONS THAT NEVER MOVE - EACH SAYS WHAT',
-        'IT DOES NOW. BOTTOM: SNAP/RUN/JUKE/PULL. RIGHT: SPIN/SWAT.',
-        'LEFT: SPRINT (HOLD, ~3 SECONDS A PLAY). TOP: SWITCH.',
+        'RIGHT THUMB: FOUR BUTTONS THAT NEVER MOVE. OFFENSE: BOTTOM',
+        'SNAP, THEN SPRINT (HOLD). RIGHT MOTION/SPIN. LEFT JUKE. TOP',
+        'CATCH. DEFENSE: BOTTOM SPRINT, RIGHT SWITCH, LEFT PULL, TOP PICK.',
         'THROW: TAP THE RECEIVER ON THE FIELD (OR HIS WINDOW, WITH',
         'OPTIONS > PASSING > WINDOWS). TAP = LOB, HOLD = BULLET.',
         'PLAY CALLING: TAP A TILE. FLIP / NO HUDDLE / RESET ARE THE',
@@ -9008,7 +9139,7 @@ FF.legends = (function () {
         'THE STICK MOVES THE QB. CROSS THE LINE TO RUN WITH IT -',
         'EXCEPT IN A NO-RUN ZONE (HATCHED TURF).',
         'HANDOFFS AND PITCHES HAPPEN BY THEMSELVES ON RUN PLAYS.',
-        'BALL IN THE AIR: DIVE. CARRIER: JUKE, SPIN, SPRINT.',
+        'BALL IN THE AIR: CATCH (TOP). CARRIER: JUKE, SPIN, SPRINT.',
         '7-SECOND PASS CLOCK.',
       ],
       'DEFENSE': [
@@ -9019,7 +9150,7 @@ FF.legends = (function () {
         'PULL TAKES THE FLAG WHEN YOU ARE IN REACH. FROM THE SIDE IS',
         'BEST; A RUNNER MID-JUKE OR MID-SPIN SLIPS YOU.',
         'MISS A RUNNER GOING BY AT SPEED AND HE IS GONE.',
-        'PULL AWAY FROM THE RUNNER LUNGES. SWAT KNOCKS DOWN A PASS.',
+        'PULL AWAY FROM THE RUNNER LUNGES. TOP: PICK OR SWAT A PASS.',
         'REACH THE QB IN THE POCKET AND PULL FOR A SACK.',
         'ON ROOKIE (OR WITH AUTO FLAG PULL ON) PULLS ARE AUTOMATIC.',
       ],
@@ -9083,7 +9214,7 @@ FF.legends = (function () {
     },
     exit() { FF.audio.setCrowd(false); },
     finished(g) {
-      if (this.args.mode === 'superstar') FF.go('postgame', { game: g, career: this.args.career });
+      if (this.args.mode === 'superstar') { FF.store.useStarTrial(); FF.go('postgame', { game: g, career: this.args.career }); }
       else if (this.args.mode === 'training') FF.go('trainingResult', { game: g });
       else if (this.args.mode === 'franchise') FF.go('franchisePostgame', { game: g });
       else if (this.args.mode === 'exhibition') this.exhibitionOver(g);
@@ -9104,7 +9235,7 @@ FF.legends = (function () {
         if (confirm(input)) {
           if (g.pauseSel === 0) { g.paused = false; FF.audio.play('select'); return; }
           if (g.pauseSel === 1) { FF.settings.hints = FF.settings.hints === false; FF.saveSettings(); FF.audio.play('tick'); return; }
-          FF.audio.play('back'); if (this.args.mode === 'superstar') FF.go('superstar'); else if (this.args.mode === 'training') this.finished(g); else if (this.args.mode === 'franchise') FF.go('franchise'); else if (this.args.mode === 'exhibition') this.exhibitionOver(g); else FF.go('mainmenu'); return;
+          FF.audio.play('back'); if (this.args.mode === 'superstar') { if (g.half >= 2 || g.ot) FF.store.useStarTrial(); FF.go('superstar'); } else if (this.args.mode === 'training') this.finished(g); else if (this.args.mode === 'franchise') FF.go('franchise'); else if (this.args.mode === 'exhibition') this.exhibitionOver(g); else FF.go('mainmenu'); return;
         }
       }
       if (this.args.mode === 'practice' && g.state === 'playcall' && !g.callUI.humanSide) { }
@@ -9336,6 +9467,8 @@ FF.legends = (function () {
   /* ------------------------------------------------------- the hub */
   S.superstar = {
     enter() {
+      // free version: after his first game the career continues in the Full Game
+      if (FF.store.locked('superstar')) { FF.go('unlock', { reason: 'star', item: 'SUPERSTAR MODE' }); return; }
       this.career = FF.loadCareer(); this.sel = 0; FF.audio.music('menu');
       if (!this.career) { FF.go('starCreate'); return; }
       const c = this.career; if (c.week >= C.SEASON_GAMES && !c.playoffs) { C.seedPlayoffs(c); FF.saveCareer(c); }

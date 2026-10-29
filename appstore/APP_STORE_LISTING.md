@@ -17,8 +17,8 @@ Everything to paste into App Store Connect, in the order the screens ask for it.
 
 ## Pricing: free download + one in-app purchase
 - **App price**: Free.
-- The free version plays **one exhibition game**. Everything else (Superstar, Franchise, unlimited Exhibition, Practice,
-  Playbook, Rosters, Hall of Fame) is the **Full Game**, a one-time in-app purchase at **$1.99**. Options and How to Play
+- The free version plays **one exhibition game** and a **Superstar career through draft day and his first game**.
+  Everything else (the rest of the Superstar career, Franchise, unlimited Exhibition, Practice, Playbook, Rosters, Hall of Fame) is the **Full Game**, a one-time in-app purchase at **$1.99**. Options and How to Play
   stay open. The price shown in the game comes from the App Store, in the player's own currency.
 - Needs the **Paid Apps agreement** (Business → Agreements, Tax and Banking) to be active, even though the app is free.
 
@@ -73,7 +73,7 @@ EVERYTHING ELSE
 - No ads. No accounts. Plays offline.
 
 FREE TO TRY
-The free download includes an exhibition game. The Full Game, a one-time in-app purchase, unlocks Superstar Mode, Franchise Mode, unlimited exhibition games, Practice, the playbook editor and rosters. No subscription.
+The free download includes an exhibition game and the start of a Superstar career: create your player, go through draft day and play his first game. The Full Game, a one-time in-app purchase, unlocks the rest of his career, Franchise Mode, unlimited exhibition games, Practice, the playbook editor and rosters. No subscription.
 
 An original game: all teams, players and logos are fictional.
 ```
@@ -122,7 +122,7 @@ Turn Game Center on for the app, then create these with exactly these IDs. The g
 ```
 Flag Football '94 is a single-player, offline football game. No account or sign-in is needed; Game Center is optional (leaderboard + achievements).
 
-Free version and in-app purchase: the free download plays one exhibition game; the other modes show a padlock. The non-consumable in-app purchase "Full Game" (com.jarmold.flagfootball94.fullgame) unlocks everything. To test it with a sandbox account: tap UNLOCK FULL GAME (top right of the main menu) or any locked mode, then UNLOCK FULL GAME - $1.99. RESTORE PURCHASES is on the same screen.
+Free version and in-app purchase: the free download plays one exhibition game and a Superstar career up to the end of his first game; the other modes show a padlock. The non-consumable in-app purchase "Full Game" (com.jarmold.flagfootball94.fullgame) unlocks everything. To test it with a sandbox account: tap UNLOCK FULL GAME (top right of the main menu) or any locked mode, then UNLOCK FULL GAME - $1.99. RESTORE PURCHASES is on the same screen.
 
 How to play: tap anywhere on the title screen, choose EXHIBITION, pick two teams and tap KICK OFF. On offense tap a formation, then a play; tap SNAP, then tap a receiver on the field to throw. SUPERSTAR MODE is the career mode (create a player, then enter the draft or sign with a team).
 

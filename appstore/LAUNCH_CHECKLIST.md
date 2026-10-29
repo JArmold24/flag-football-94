@@ -22,7 +22,7 @@ In order:
    `APP_STORE_LISTING.md`, with the review screenshot `iap_review.png`.
 9. **TestFlight**: install the build on your own iPhone and play a full game, a Superstar season and a retire.
    Check: saves survive closing the app; haptics; Game Center sign-in banner; an achievement unlocks; the
-   leaderboard opens from the Hall of Fame. Free version: finish one exhibition game, see the unlock screen, buy the
+   leaderboard opens from the Hall of Fame. Free version: finish one exhibition game and one Superstar game, see the unlock screen each time, buy the
    Full Game (TestFlight purchases are free, sandbox), delete and reinstall, check it unlocks again (or via Restore
    Purchases). Add friends as testers.
 10. **Fill the listing** from `APP_STORE_LISTING.md`: app information, pricing, App Privacy (Data Not Collected),
@@ -32,7 +32,7 @@ In order:
     takes 1–3 days. Choose manual release so you control the launch day.
 12. **Release** once approved.
 
-Decided: **free download, one free exhibition game, $1.99 Full Game unlock** (built in v0.30).
+Decided: **free download (one exhibition game + a Superstar career through his first game), $1.99 Full Game unlock** (v0.30, Superstar trial v0.31).
 
 Before launch: the GitHub Pages site and the claude.ai page still serve the whole game free in a browser. Decide whether
 to take the playable web build down (keep only the privacy and support pages) before the App Store release.

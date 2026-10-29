@@ -1,4 +1,4 @@
-# Flag Football '94 — PC, phone & iOS build (v0.30)
+# Flag Football '94 — PC, phone & iOS build (v0.31)
 
 A 16-bit style 5-on-5 flag football game built from the design document, with the
 Madden '94 play-calling grid, passing windows, and camera, plus a **Superstar** career mode.
@@ -118,6 +118,34 @@ Rebuild the sheet with `cd tools/prerender && npm install && node render.js` (ne
 - Score strip with team emblems and a possession arrow; receiver windows centered; dust on cuts,
   spins and dives; the pulled flag tumbles away; screen shake on a sack; scene fades; play-call
   diagrams no longer spill out of their tiles; menus sit over a dusk stadium.
+
+## v0.31 — your button layout, a snap you can't time, a one-sided play call
+- **The touch pad, remapped.** The four buttons still never move; what they do is now:
+
+  | | Offense | Defense |
+  |---|---|---|
+  | Bottom | SNAP, then SPRINT (hold) | SPRINT (hold) |
+  | Right | MOTION, then SPIN (QB: WINDOWS) | SWITCH |
+  | Left | JUKE | PULL |
+  | Top | CALL for the ball, then CATCH | PICK or SWAT |
+
+  Retro styles: bottom BURST (or SKIP), left STUTTER, right MOTION / LOB-BULLET.
+- **PICK or SWAT is decided for you.** With the ball in the air, the top button reads PICK when your defender can
+  take it: he beats the receiver to the spot, sits underneath a bullet, or is over the top of a lob. Otherwise it
+  reads SWAT. A PICK leans the odds to the interception and a SWAT to the breakup. In a test at the same contested
+  spot, a pick ran about 66% INT / 34% breakup and a swat 53% / 47%; the CPU's plays on the ball keep the old even split.
+- **Sprint into a move with one thumb.** Lift off SPRINT and it holds 0.2 s longer. A JUKE / SPIN / PULL started in
+  that window keeps the sprint through the move (0.35 s). You can also slide your thumb from SPRINT onto the move
+  without lifting. Stamina still drains, and it's touch only. Hold SNAP through the snap and you're already sprinting.
+- **SWITCH while the defense jogs to its marks**, not just once everyone is set.
+- **The CPU's snap count varies.** Against a human defense it mixes a quick count (0.35-0.8 s after the set), a
+  normal one (1.1-2.3 s) and a long one (2.5-4.2 s), rarely the same twice running. A hurry-up offense snaps quickly;
+  a team milking the clock holds it longer.
+- **Play call shows only your side.** On offense the defense half is empty, apart from its name and timeouts. On
+  defense the offense half is a box with the CPU's personnel (QB - 1 / C - 1 / RB - 1 / WR - 2). Practice and the
+  title-screen demo still show both grids.
+- **Free version: Superstar through his first game.** Create the player, go through draft day, play his first game.
+  After that, his career continues in the Full Game. The free exhibition game stays.
 
 ## v0.30 — a fixed button pad, and the free version
 - **The right-thumb pad no longer moves.** Four buttons in a diamond, like a controller's A / B / X / Y, always in the
