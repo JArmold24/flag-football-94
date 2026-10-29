@@ -2,12 +2,13 @@ import UIKit
 import Capacitor
 
 /// The game's root view controller: Capacitor's bridge view, full-screen for play.
-/// - registers the local Game Center plugin
+/// - registers the local Game Center and in-app purchase plugins
 /// - hides the status bar and the home indicator, and defers the system edge gestures so a
 ///   thumb on the stick near the screen edge does not pull down Control Center or go home
 class GameViewController: CAPBridgeViewController {
     override open func capacitorDidLoad() {
         bridge?.registerPluginInstance(GameCenterPlugin())
+        bridge?.registerPluginInstance(StorePlugin())
     }
 
     override var prefersStatusBarHidden: Bool { true }

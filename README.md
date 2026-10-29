@@ -1,4 +1,4 @@
-# Flag Football '94 — PC, phone & iOS build (v0.29)
+# Flag Football '94 — PC, phone & iOS build (v0.30)
 
 A 16-bit style 5-on-5 flag football game built from the design document, with the
 Madden '94 play-calling grid, passing windows, and camera, plus a **Superstar** career mode.
@@ -118,6 +118,23 @@ Rebuild the sheet with `cd tools/prerender && npm install && node render.js` (ne
 - Score strip with team emblems and a possession arrow; receiver windows centered; dust on cuts,
   spins and dives; the pulled flag tumbles away; screen shake on a sack; scene fades; play-call
   diagrams no longer spill out of their tiles; menus sit over a dusk stadium.
+
+## v0.30 — a fixed button pad, and the free version
+- **The right-thumb pad no longer moves.** Four buttons in a diamond, like a controller's A / B / X / Y, always in the
+  same place. Each one says, in small text, what it does right now, and a slot with nothing to do stays put, dimmed:
+  - **Bottom:** SNAP, RUN, JUKE, DIVE / CALL, PULL / PICK
+  - **Right:** MOTION, WINDOWS, SPIN, SWAT
+  - **Left:** SPRINT (hold), whenever the ball is live
+  - **Top:** SWITCH defender
+  Each slot has its own tint (green, red, blue, gold) so they read apart at a glance. AUDIBLE moved to the top
+  corner beside PLAY ART: both are pre-snap only. Before, buttons appeared and vanished between phases and the
+  column re-packed, so SWITCH jumped three slots at the snap. The retro styles use the same pad.
+- **Free download, $1.99 Full Game (iPhone / iPad app only).** The free version plays one exhibition game. Superstar,
+  Franchise, unlimited Exhibition, Practice, Playbook, Rosters and the Hall of Fame show a padlock and open the
+  unlock screen. The Full Game is a single non-consumable in-app purchase (StoreKit 2, verified on the device), with
+  Restore Purchases. The price comes from the App Store in the player's currency. The unlock is cached, so it holds
+  offline, and a refund locks it again. The free game counts once it's finished or quit after halftime. The browser,
+  PWA and claude.ai builds have nothing locked.
 
 ## v0.29 — the iPhone & iPad app
 The game now ships as a native iOS app (Capacitor 8, in `native/` of the GitHub repo), built in the cloud by

@@ -39,6 +39,7 @@
    - plays haptics for the big moments (catch, pull, pick, touchdown, sack)
    - signs in to Game Center: the Superstar legacy score goes to the Hall of Fame leaderboard, career
      milestones unlock achievements
+   - sells the one in-app purchase (Full Game) through StoreKit; src/store.js decides what is locked
    Plugins are reached through Capacitor's native bridge (window.Capacitor.nativePromise), so no bundler is needed.
    This file loads before everything else so the save restore happens before the settings are read. */
 'use strict';
@@ -96,6 +97,17 @@
   GC.showLeaderboard = () => GC.status().then(ok => ok ? call('GameCenter', 'showLeaderboard', { leaderboardId: LEADERBOARD }).then(() => true) : false).catch(() => false);
   GC.showAchievements = () => GC.status().then(ok => ok ? call('GameCenter', 'showAchievements').then(() => true) : false).catch(() => false);
 
+  /* ---------------------------------------------------------- in-app purchase */
+  // one non-consumable, "Full Game" (create it in App Store Connect with exactly this product id)
+  const PRODUCT = 'com.jarmold.flagfootball94.fullgame';
+  N.iap = {
+    PRODUCT,
+    product: () => call('Store', 'product', { productId: PRODUCT }),
+    purchase: () => call('Store', 'purchase', { productId: PRODUCT }),
+    restore: () => call('Store', 'restore', { productId: PRODUCT }),
+    owned: () => call('Store', 'owned', { productId: PRODUCT }),
+  };
+
   /* ------------------------------------------------------------------ haptics */
   const HAPTIC = {
     catch: ['impact', { style: 'LIGHT' }], rip: ['impact', { style: 'MEDIUM' }], deflect: ['impact', { style: 'LIGHT' }],
@@ -119,6 +131,8 @@
     if (FF.legends && FF.legends.retire) { const ret = FF.legends.retire; FF.legends.retire = function (c) { const e = ret.apply(this, arguments); GC.submitLegacy(e.legacy); if (e.hof) GC.achieve('hof'); if (c && c.captainEver) GC.achieve('captain'); return e; }; }
     // Game Center asks once, a beat after the title appears (Apple: authenticate as early as possible)
     setTimeout(() => GC.signIn(), 1200);
+    // the store: price for the unlock screen, and ownership now and every time the app comes back
+    if (FF.store) { FF.store.refresh(); document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') FF.store.refresh(); }); }
   };
 })();
 
@@ -1523,7 +1537,7 @@ function fitCanvas() {
 FF.kb = function (s) {
   if (!(FF.touch && FF.touch.active) || !s) return s;
   // whole phrases first, then key-by-key: on a phone the right-hand buttons are labeled with the action itself
-  // (SNAP, JUKE, PULL, SPIN, SWAT, DIVE, SPRINT, SWITCH, AUD, PLAY ART), so the hint names the button
+  // (SNAP, JUKE, PULL, SPIN, SWAT, DIVE, SPRINT, SWITCH, AUDIBLE, PLAY ART), so the hint names the button
   s = s.replace(/THROW: 1 2 3 4/g, 'THROW: TAP A WINDOW').replace(/1-3: PICK IN WINDOW/g, 'TAP A TILE').replace(/1-4 \+ ARROW: HOT ROUTE/g, '').replace(/E: MOTION/g, 'MOTION: SEND #1 ACROSS')
     .replace(/R: INSTANT REPLAY/g, 'REPLAY BUTTON').replace(/\bR: SPEED/g, 'SPEED').replace(/UP\/DOWN: CAMERA/g, 'CAM').replace(/LEFT\/RIGHT: SCRUB/g, 'STICK: SCRUB');
   const seg = s.split(/ {3,}/).map(t => t.trim()).filter(Boolean).map(t => {
@@ -1534,7 +1548,7 @@ FF.kb = function (s) {
     if (k === 'ESC') return 'MENU: ' + a.replace(/^MENU$/, 'PAUSE');
     if (k === 'ENTER') return 'TAP: ' + a;
     if (k === 'ARROWS') return 'STICK: ' + a;
-    if (k === 'Q') return 'AUD: AUDIBLE';
+    if (k === 'Q') return 'AUDIBLE BUTTON';
     if (k === 'V') return 'PLAY ART BUTTON';
     if (k === 'TAB') return 'SWITCH: ' + a.replace(/^SWITCH( PLAYER)?$/, 'CHANGE PLAYER');
     return 'TAP ' + a;    // SPACE / E: the button carries the action's name
@@ -1918,6 +1932,64 @@ FF.dynLevel = w => 0.6 + 0.12 * (w == null ? FF.dynWins() : w);          // 0.6 
 FF.effDiff = d => d === 3 ? FF.dynLevel() : FF.clamp(d == null ? 1 : +d, 0, 2.4);
 FF.diffName = d => d === 3 ? 'DYNAMIC LV ' + (FF.dynWins() + 1) : FF.DIFF_NAMES[FF.clamp(d | 0, 0, 2)];
 FF.diffMult = d => { const L = FF.effDiff(d); return L <= 1 ? 0.8 + 0.2 * L : 1 + 0.25 * (L - 1); };   // XP: 0.8 / 1.0 / 1.25 (and up)
+
+</script>
+<script>
+/* ---- src/store.js ---- */
+/* store.js — the free version and the Full Game unlock (iPhone / iPad app only).
+   The App Store download is free: one exhibition game to try it, then everything is part of the Full Game, a single
+   in-app purchase. Outside the app (browser, PWA, the hosted page) nothing is locked and this file changes nothing.
+   Ownership comes from StoreKit (src/native.js); it is cached on the device so the game opens unlocked offline. */
+'use strict';
+
+FF.store = (function () {
+  const FREE_GAMES = 1;                       // exhibition games before the lock
+  const S = { price: null, busy: false, msg: null, FREE_GAMES };
+  const iap = () => (window.NATIVE && NATIVE.on && NATIVE.iap) || null;
+  S.native = () => !!iap();
+  S.full = () => !iap() || FF.load('unlocked', false) === true;
+  S.trialUsed = () => ((FF.load('trial', null) || {}).games | 0);
+  S.trialLeft = () => S.full() ? Infinity : Math.max(0, FREE_GAMES - S.trialUsed());
+  // what is open in the free version: exhibition while the free game lasts; options and how-to always
+  S.locked = what => {
+    if (S.full() || what === 'options' || what === 'howto') return false;
+    if (what === 'exhibition') return S.trialLeft() <= 0;
+    return true;
+  };
+  S.useTrial = () => { if (!S.full()) FF.save('trial', { games: S.trialUsed() + 1, when: Date.now() }); };
+  function setOwned(owned) {
+    const was = S.full();
+    FF.save('unlocked', !!owned);
+    if (owned && !was) { S.msg = 'THANK YOU! EVERYTHING IS UNLOCKED.'; FF.audio && FF.audio.play('select'); }
+  }
+  // ownership (launch, resume) and the localized price; a failed check changes nothing
+  S.refresh = () => {
+    const I = iap(); if (!I) return Promise.resolve(true);
+    if (!S.price) I.product().then(p => { if (p && p.displayPrice) S.price = p.displayPrice; }).catch(() => {});
+    return I.owned().then(r => { if (r && typeof r.owned === 'boolean') setOwned(r.owned); return S.full(); }).catch(() => S.full());
+  };
+  S.buy = () => {
+    const I = iap(); if (!I || S.busy) return;
+    S.busy = true; S.msg = 'CONNECTING TO THE APP STORE...';
+    I.purchase().then(r => {
+      S.busy = false;
+      if (r && r.owned) setOwned(true);
+      else if (r && r.result === 'pending') S.msg = 'WAITING FOR APPROVAL. IT UNLOCKS WHEN APPROVED.';
+      else if (r && r.result === 'cancelled') S.msg = null;
+      else S.msg = 'THE PURCHASE DID NOT GO THROUGH. TRY AGAIN.';
+    }).catch(() => { S.busy = false; S.msg = 'COULD NOT REACH THE APP STORE. TRY AGAIN.'; });
+  };
+  S.restore = () => {
+    const I = iap(); if (!I || S.busy) return;
+    S.busy = true; S.msg = 'RESTORING...';
+    I.restore().then(r => {
+      S.busy = false;
+      if (r && r.owned) { setOwned(true); S.msg = 'RESTORED. EVERYTHING IS UNLOCKED.'; }
+      else S.msg = r && r.synced === false ? 'COULD NOT REACH THE APP STORE. TRY AGAIN.' : 'NO PURCHASE FOUND FOR THIS APPLE ACCOUNT.';
+    }).catch(() => { S.busy = false; S.msg = 'COULD NOT REACH THE APP STORE. TRY AGAIN.'; });
+  };
+  return S;
+})();
 
 </script>
 <script>
@@ -7482,8 +7554,9 @@ FF.retro = (function () {
 </script>
 <script>
 /* ---- src/touch.js ---- */
-/* touch.js — phone / tablet controls. A floating stick under the left thumb, context buttons under the right
-   (their labels follow the situation: SNAP, JUKE, PULL, DIVE...), taps on the receiver windows to throw (tap = lob,
+/* touch.js — phone / tablet controls. A floating stick under the left thumb, a fixed four-button pad under the right
+   (A B X Y in a diamond; each button's small label says what it does right now: SNAP, JUKE, PULL, SPRINT...), the
+   pre-snap extras (AUDIBLE, PLAY ART) in the top corner, taps on the receivers / their windows to throw (tap = lob,
    hold = bullet), taps on the play-call tiles, swipes for menus. Everything feeds FF.input as virtual buttons so
    the game code never knows the difference. The layer only appears once a finger touches the screen. */
 'use strict';
@@ -7498,13 +7571,19 @@ FF.touch = (function () {
   let layoutKey = '';
 
   const B = {   // button definitions: id -> logical button, default label
-    A: { b: 'A', label: 'A' }, Bb: { b: 'B', label: 'B' }, SPR: { b: 'SPRINT', label: 'SPRINT' }, SW: { b: 'SWITCH', label: 'SWITCH' },
-    MENU: { b: 'BACK', label: 'MENU' }, BACK: { b: 'BACK', label: 'BACK' }, AUD: { b: 'Q', label: 'AUD' }, REP: { b: 'R', label: 'REPLAY' },
+    PA: { b: 'A', label: '' }, PB: { b: 'B', label: '' }, PX: { b: 'SPRINT', label: '' }, PY: { b: 'SWITCH', label: '' },
+    MENU: { b: 'BACK', label: 'MENU' }, BACK: { b: 'BACK', label: 'BACK' }, AUD: { b: 'Q', label: 'AUDIBLE' }, REP: { b: 'R', label: 'REPLAY' },
     CAM: { b: 'UP', label: 'CAM' }, SPD: { b: 'R', label: 'SPEED' }, DONE: { b: 'START', label: 'DONE' }, FS: { b: null, label: 'FULL' },
     OK: { b: 'START', label: 'OK' }, TO: { b: 'TIMEOUT', label: 'T.O.' }, NH: { b: 'NOHUDDLE', label: 'HURRY' }, FLIP: { b: 'FLIP', label: 'FLIP' }, TYPE: { b: null, label: 'KEYBOARD' }, DEL: { b: 'BACKSPACE', label: 'DEL' }, ART: { b: 'VIEW', label: 'PLAY ART' },
   };
 
   function game() { const sc = FF.scenes && FF.scenes.game; return FF.currentScene === 'game' && sc && sc.game ? sc.game : null; }
+  // The right-thumb pad: four buttons in a fixed diamond (Y top, X left, B right, A bottom) that never move.
+  // Each shows, in small text, what it does right now; a slot with nothing to do stays in place, dimmed.
+  //   A  the main action: SNAP, RUN, JUKE, DIVE, PULL, PICK      B  the second action: MOTION, WINDOWS, SPIN, SWAT
+  //   X  SPRINT (hold), whenever the ball is live               Y  SWITCH to another defender
+  const PAD = { PA: 'A', PB: 'B', PX: 'SPRINT', PY: 'SWITCH' };
+  const pad = (A, Bl, X, Y, ghost) => ({ PA: A || null, PB: Bl || null, PX: X || null, PY: Y || null, ghost: ghost !== false });
   // what the screen needs right now
   function context() {
     const g = game();
@@ -7517,34 +7596,34 @@ FF.touch = (function () {
       case 'conversion': case 'otchoice': return { name: 'choice', buttons: ['MENU'], halves: true };
       case 'playcall': return { name: 'playcall', buttons: ['MENU', 'TO'], grid: true };   // FLIP / NO HUDDLE / RESET are tappable on the screen itself
       case 'result': return { name: 'result', buttons: g.canReplay && g.canReplay() ? ['MENU', 'REP'] : ['MENU'], tapIs: 'A' };
-      case 'replay': return { name: 'replay', buttons: ['DONE', 'CAM', 'SPD', 'A'], labels: { A: 'PAUSE' }, stick: 'scrub' };
+      case 'replay': return { name: 'replay', buttons: ['DONE', 'CAM', 'SPD'], pad: pad('PAUSE', null, null, null, false), stick: 'scrub' };
       case 'swing': return { name: 'swing', buttons: [] };
       case 'play': {
-        if (g.retro) {   // RETRO SIDELINE: one finger does the play
-          if (!s || !s.humanSide) return { name: 'watch', buttons: s && s.phase === 'presnap' ? ['MENU', 'ART', 'A'] : ['MENU', 'A'], labels: { A: 'SKIP' } };
+        if (g.retro) {   // RETRO SIDELINE / OVERHEAD: one finger does the play; the pad keeps its place
+          if (!s || !s.humanSide) return { name: 'watch', buttons: s && s.phase === 'presnap' ? ['MENU', 'ART'] : ['MENU'], pad: pad('SKIP') };
           const c = s.controlled, pre = s.phase === 'presnap';
           if (s.audible) return { name: 'audible', buttons: ['MENU'] };
-          if (pre) return { name: 'pre-off', buttons: s.mayCall && !s.mayCall('off') ? ['MENU', 'ART'] : ['MENU', 'Bb', 'AUD', 'ART'], labels: { Bb: s.motion && s.motion.auto ? 'SET' : 'MOTION' }, gesture: 'snapAim', ready: s.set && !g.intro && (s.t - s.setT) > 0.3 };
+          if (pre) { const call = !(s.mayCall && !s.mayCall('off')); return { name: 'pre-off', buttons: call ? ['MENU', 'AUD', 'ART'] : ['MENU', 'ART'], pad: pad(null, call ? (s.motion && s.motion.auto ? 'SET' : 'MOTION') : null), gesture: 'snapAim', ready: s.set && !g.intro && (s.t - s.setT) > 0.3 }; }
           if (c && c.side === 'off') {
-            if (c === s.qb && (c.hasBall || s.ball.state === 'snap') && !s.handedOff && !s.qbScramble) return { name: 'qb', buttons: ['MENU', 'Bb'], labels: { Bb: s.lobMode ? 'LOB' : 'BULLET' }, gesture: 'aim' };
-            if (c.hasBall) return { name: 'carry', buttons: ['MENU', 'A', 'Bb'], labels: { A: 'BURST', Bb: 'STUTTER' }, gesture: 'steer' };
-            return { name: 'rec', buttons: ['MENU'] };
+            if (c === s.qb && (c.hasBall || s.ball.state === 'snap') && !s.handedOff && !s.qbScramble) return { name: 'qb', buttons: ['MENU'], pad: pad(null, s.lobMode ? 'LOB' : 'BULLET'), gesture: 'aim' };
+            if (c.hasBall) return { name: 'carry', buttons: ['MENU'], pad: pad('BURST', 'STUTTER'), gesture: 'steer' };
+            return { name: 'rec', buttons: ['MENU'], pad: pad() };
           }
-          return { name: 'watch', buttons: ['MENU'] };
+          return { name: 'watch', buttons: ['MENU'], pad: pad() };
         }
         if (!s || !s.humanSide) return { name: 'watch', buttons: ['MENU'], tapIs: 'START' };
         const c = s.controlled, pre = s.phase === 'presnap';
-        if (s.audible) return { name: 'audible', buttons: ['MENU'], labels: {}, windows: false };
+        if (s.audible) return { name: 'audible', buttons: ['MENU'], windows: false };
         if (pre) {
-          if (s.humanSide === 'off') return { name: 'pre-off', buttons: s.mayCall && !s.mayCall('off') ? ['MENU', 'A', 'ART'] : ['MENU', 'A', 'Bb', 'AUD', 'ART'], labels: { A: 'SNAP', Bb: s.motion && s.motion.auto ? 'SET' : 'MOTION' }, stick: true };
-          return { name: 'pre-def', buttons: s.star ? (s.mayCall('def') ? ['MENU', 'AUD', 'ART'] : ['MENU', 'ART']) : ['MENU', 'SW', 'AUD', 'ART'], stick: true };
+          if (s.humanSide === 'off') { const call = !(s.mayCall && !s.mayCall('off')); return { name: 'pre-off', buttons: call ? ['MENU', 'AUD', 'ART'] : ['MENU', 'ART'], pad: pad('SNAP', call ? (s.motion && s.motion.auto ? 'SET' : 'MOTION') : null), stick: true }; }
+          return { name: 'pre-def', buttons: !s.star || s.mayCall('def') ? ['MENU', 'AUD', 'ART'] : ['MENU', 'ART'], pad: pad(null, null, null, s.star ? null : 'SWITCH'), stick: true };
         }
         if (c && c.side === 'off') {
-          if (c === s.qb && c.hasBall && !s.handedOff) return FF.settings.passView === 'field' ? { name: 'qb', buttons: ['MENU', 'A', 'SPR'], labels: { A: 'RUN' }, stick: true, windows: true } : { name: 'qb', buttons: ['MENU', 'A', 'Bb', 'SPR'], labels: { A: 'RUN', Bb: 'WINDOWS' }, stick: true, windows: true };
-          if (c.hasBall) return { name: 'carry', buttons: ['MENU', 'A', 'Bb', 'SPR'], labels: { A: 'JUKE', Bb: 'SPIN' }, stick: true };
-          return { name: 'rec', buttons: ['MENU', 'A', 'SPR'], labels: { A: s.ball.state === 'air' ? 'DIVE' : (s.star ? 'CALL' : 'DIVE') }, stick: true };
+          if (c === s.qb && c.hasBall && !s.handedOff) return { name: 'qb', buttons: ['MENU'], pad: pad('RUN', FF.settings.passView === 'field' ? null : 'WINDOWS', 'SPRINT'), stick: true, windows: true };
+          if (c.hasBall) return { name: 'carry', buttons: ['MENU'], pad: pad('JUKE', 'SPIN', 'SPRINT'), stick: true };
+          return { name: 'rec', buttons: ['MENU'], pad: pad(s.ball.state === 'air' ? 'DIVE' : (s.star ? 'CALL' : 'DIVE'), null, 'SPRINT'), stick: true };
         }
-        return { name: 'def', buttons: ['MENU', 'A', 'Bb', 'SPR', 'SW'], labels: { A: s.ball.state === 'air' ? 'PICK' : 'PULL', Bb: 'SWAT' }, stick: true };
+        return { name: 'def', buttons: ['MENU'], pad: pad(s.ball.state === 'air' ? 'PICK' : 'PULL', 'SWAT', 'SPRINT', s.star ? null : 'SWITCH'), stick: true };
       }
     }
     return { name: 'other', buttons: ['MENU'], tapIs: 'START' };
@@ -7568,7 +7647,15 @@ FF.touch = (function () {
       #touch .tb.on { transform: scale(0.94); background: linear-gradient(160deg, rgba(255,236,140,0.70), rgba(255,200,60,0.45)); color: #1a1400; text-shadow: none;
         box-shadow: inset 0 1px 1px rgba(255,255,255,0.7), 0 0 22px rgba(255,214,80,0.55), 0 4px 12px rgba(0,0,0,0.3); }
       #touch .tb.pill { border-radius: 999px; font-size: 12px; }
-      #touch .tb.big { font-size: 16px; }
+      /* the pad: each slot has its own tint on the rim and in the press glow, so the four read apart at a glance */
+      #touch .tb.pad { font-size: 12px; font-weight: 700; letter-spacing: 0.4px; border: 1.5px solid var(--rim); box-shadow: inset 0 1px 1px rgba(255,255,255,0.55), inset 0 -8px 16px rgba(0,0,0,0.12), 0 0 0 1px rgba(0,0,0,0.18), 0 6px 18px rgba(0,0,0,0.35); }
+      #touch .tb.pad.on { background: linear-gradient(160deg, var(--glow), var(--glow2)); color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.5); box-shadow: inset 0 1px 1px rgba(255,255,255,0.7), 0 0 22px var(--glow), 0 4px 12px rgba(0,0,0,0.3); }
+      #touch .tb.pad.off { opacity: 0.32; box-shadow: inset 0 1px 1px rgba(255,255,255,0.35), 0 3px 10px rgba(0,0,0,0.22); }
+      #touch .tb.pad.off.faint { opacity: 0.18; }
+      #touch .tb.pad.slotA { --rim: rgba(110,235,140,0.85); --glow: rgba(70,210,110,0.78); --glow2: rgba(30,150,70,0.55); }
+      #touch .tb.pad.slotB { --rim: rgba(255,130,120,0.85); --glow: rgba(240,80,70,0.78); --glow2: rgba(170,30,30,0.55); }
+      #touch .tb.pad.slotX { --rim: rgba(120,185,255,0.85); --glow: rgba(70,150,250,0.78); --glow2: rgba(30,80,190,0.55); }
+      #touch .tb.pad.slotY { --rim: rgba(255,220,110,0.9); --glow: rgba(250,200,60,0.8); --glow2: rgba(190,130,20,0.55); }
       #touch #stk { position: absolute; width: 116px; height: 116px; margin: -58px 0 0 -58px; border-radius: 50%; display: none;
         border: 1px solid rgba(255,255,255,0.40); background: radial-gradient(circle at 50% 40%, rgba(255,255,255,0.16), rgba(255,255,255,0.05) 70%);
         -webkit-backdrop-filter: blur(10px) saturate(150%); backdrop-filter: blur(10px) saturate(150%); box-shadow: inset 0 1px 1px rgba(255,255,255,0.4), 0 6px 18px rgba(0,0,0,0.3); }
@@ -7580,7 +7667,7 @@ FF.touch = (function () {
     document.head.appendChild(css);
     root = document.createElement('div'); root.id = 'touch'; document.body.appendChild(root);
     stickBase = el('div'); stickBase.id = 'stk'; stickKnob = el('div'); stickKnob.id = 'knb';
-    for (const k in B) { const e = el('div', 'tb' + (k === 'A' || k === 'Bb' ? ' big' : (k === 'FS' ? '' : ' pill'))); e.textContent = B[k].label; btnEls[k] = e; }
+    for (const k in B) { const e = el('div', 'tb' + (PAD[k] ? ' pad slot' + k[1] : (k === 'FS' ? '' : ' pill'))); e.textContent = B[k].label; if (PAD[k]) e.dataset.slot = k[1]; btnEls[k] = e; }
     // a hidden text field: focusing it from the KEYBOARD button raises the phone keyboard; what is typed feeds the game
     T.field = document.createElement('input'); T.field.type = 'text'; T.field.autocapitalize = 'characters'; T.field.autocomplete = 'off'; T.field.maxLength = 14;
     Object.assign(T.field.style, { position: 'fixed', left: '-1000px', top: '0', opacity: '0', pointerEvents: 'none' }); document.body.appendChild(T.field);
@@ -7609,23 +7696,25 @@ FF.touch = (function () {
     const m = Math.round(u * 0.3);
     const set = new Set(ctx.buttons);
     const bar = FF.canvasRect ? FF.canvasRect.x : 0;              // black side bars beside the picture, if the screen is wider than 10:7
-    const column = bar >= u * 1.4 + m * 2;                        // wide bars: stack the buttons in the bar so the field stays clear
+    const column = bar >= u * 1.4 + m * 2;                        // wide bars: the top-right buttons stack down the bar
     const top = m;
-    if (column) {
-      const cx = ww - m - u * 1.3; let y = wh - m;
-      if (set.has('A')) { y -= u * 1.3; place('A', cx, y, u * 1.3, u * 1.3); y -= m; }
-      if (set.has('Bb')) { y -= u * 1.1; place('Bb', cx + u * 0.1, y, u * 1.1, u * 1.1); y -= m; }
-      if (set.has('SPR')) { y -= u * 0.75; place('SPR', cx - u * 0.05, y, u * 1.4, u * 0.75); y -= m; }
-      if (set.has('SW')) { y -= u * 0.75; place('SW', cx - u * 0.05, y, u * 1.4, u * 0.75); y -= m; }
-      if (set.has('AUD')) { y -= u * 0.75; place('AUD', cx - u * 0.05, y, u * 1.4, u * 0.75); y -= m; }
-    } else {
-      // right cluster: A big at bottom-right, B above-left of it, SPRINT left of A, SWITCH above B
-      if (set.has('A')) place('A', ww - u * 1.3 - m, wh - u * 1.3 - m, u * 1.3, u * 1.3);
-      if (set.has('Bb')) place('Bb', ww - u * 2.55 - m, wh - u * 2.25 - m, u * 1.1, u * 1.1);
-      if (set.has('SPR')) place('SPR', ww - u * 2.9 - m, wh - u * 0.9 - m, u * 1.4, u * 0.75);
-      if (set.has('SW')) place('SW', ww - u * 1.5 - m, wh - u * 2.9 - m, u * 1.4, u * 0.75);
-      if (set.has('AUD')) place('AUD', ww - u * 1.5 - m, wh - u * 2.9 - m - (set.has('SW') ? u * 0.95 : 0), u * 1.4, u * 0.75);
-    }
+    // the pad: a fixed diamond in the bottom-right corner; on wide phones it sits in the stands beside the field
+    const P = ctx.pad;
+    if (P) {
+      const d = FF.clamp(Math.round(u * 1.02), 48, 66);   // ~64 px on a phone: a thumb-sized target, the whole diamond under one thumb
+      const sp = Math.round(d * 0.96), r = d / 2;
+      const cx = ww - Math.round(m * 0.6) - sp - r, cy = wh - Math.round(m * 0.6) - sp - r;
+      const at = { PA: [cx, cy + sp], PB: [cx + sp, cy], PX: [cx - sp, cy], PY: [cx, cy - sp] };
+      const retro = !!ctx.gesture || (game() && game().retro);
+      for (const k in PAD) {
+        const lab = P[k]; if (!lab && !P.ghost) continue;
+        const e = btnEls[k]; e.textContent = lab || '';
+        e.classList.toggle('off', !lab); e.classList.toggle('faint', !lab && retro);
+        place(k, at[k][0] - r, at[k][1] - r, d, d);
+        rects[k].circle = true; rects[k].live = !!lab; rects[k].swallow = !lab && !retro;   // a dimmed slot eats a stray tap in the classic view, lets a retro drag through
+      }
+      T.padRect = { x: cx - sp - r + SA.l, y: cy - sp - r + SA.t, w: sp * 2 + d, h: sp * 2 + d };
+    } else T.padRect = null;
     // top row: MENU / BACK top-left; replay controls and the timeout top-right
     if (set.has('MENU')) place('MENU', m, top, u * 1.4, u * 0.7);
     if (set.has('BACK')) place('BACK', m, top, u * 1.4, u * 0.7);
@@ -7635,20 +7724,29 @@ FF.touch = (function () {
     if (showFS) { rx -= u * 0.7; place('FS', rx, top, u * 0.7, u * 0.7); rx -= u * 0.15; }
     if (column) {   // wide side bars: the top-right buttons stack down the right bar so none covers the scoreboard
       let ty = top + (showFS ? u * 0.85 : 0); const bw = Math.min(u * 1.7, bar - m * 2);
-      for (const k of ['DONE', 'SPD', 'CAM', 'TO', 'ART']) if (set.has(k)) { place(k, ww - m - bw, ty, bw, u * 0.7); ty += u * 0.85; }
-    } else for (const k of ['DONE', 'SPD', 'CAM', 'TO', 'ART']) if (set.has(k)) { const bw = k === 'ART' ? u * 1.7 : u * 1.3; rx -= bw; place(k, rx, top, bw, u * 0.7); rx -= u * 0.15; }
+      for (const k of ['DONE', 'SPD', 'CAM', 'TO', 'ART', 'AUD']) if (set.has(k)) { place(k, ww - m - bw, ty, bw, u * 0.7); ty += u * 0.85; }
+    } else for (const k of ['DONE', 'SPD', 'CAM', 'TO', 'ART', 'AUD']) if (set.has(k)) { const bw = k === 'ART' || k === 'AUD' ? u * 1.7 : u * 1.3; rx -= bw; place(k, rx, top, bw, u * 0.7); rx -= u * 0.15; }
     if (set.has('OK')) place('OK', ww - u * 1.6 - m, wh - u * 0.9 - m, u * 1.6, u * 0.8);
     if (set.has('TYPE')) place('TYPE', ww / 2 - u * 1.1, wh - u * 0.9 - m, u * 2.2, u * 0.8);
     if (set.has('DEL')) place('DEL', ww / 2 + u * 1.3, wh - u * 0.9 - m, u * 1.2, u * 0.8);
     for (const k in ctx.labels || {}) if (btnEls[k]) btnEls[k].textContent = ctx.labels[k];
     for (const k of ctx.buttons) if (!(ctx.labels && ctx.labels[k])) btnEls[k].textContent = B[k].label;
+    // pad labels are set above
     const portrait = wh > ww * 1.05 && capable;
     rotateMsg.style.display = portrait && T.active ? 'flex' : 'none';
   }
 
   /* ---------------------------------------------------------- input */
   function canvasPt(cx, cy) { const r = FF.canvasRect || { x: 0, y: 0, w: W, h: H }; return { x: (cx - r.x) / (r.w / W), y: (cy - r.y) / (r.h / H) }; }
-  function hitButton(x, y) { for (const k in rects) { const r = rects[k]; if (x >= r.x - 6 && x <= r.x + r.w + 6 && y >= r.y - 6 && y <= r.y + r.h + 6) return k; } return null; }
+  function hitButton(x, y) {
+    let best = null, bd = 1e9;
+    for (const k in rects) {
+      const r = rects[k];
+      if (r.circle) { const dd = Math.hypot(x - (r.x + r.w / 2), y - (r.y + r.h / 2)); if (dd <= r.w * 0.62 && dd < bd && (r.live || r.swallow)) { best = k; bd = dd; } continue; }
+      if (x >= r.x - 6 && x <= r.x + r.w + 6 && y >= r.y - 6 && y <= r.y + r.h + 6) return k;
+    }
+    return best;
+  }
   // throw key (T1-T4) under a canvas point: a receiver window when the windows are open, or the receiver
   // himself on the field (PASSING: TAP RECEIVER)
   function windowAt(x, y) {
@@ -7688,6 +7786,7 @@ FF.touch = (function () {
     const rec = { role: 'tap', x0: X, y0: Y, t0: performance.now(), moved: false, mouse: isMouse };
     if (k) {
       rec.role = 'button'; rec.btn = k; btnEls[k].classList.add('on');
+      if (rects[k] && rects[k].circle && !rects[k].live) { rec.dead = true; btnEls[k].classList.remove('on'); touches.set(id, rec); return; }
       if (k === 'FS') fullscreen(); else if (k === 'TYPE') T.openKeyboard(); else if (B[k].b) inp.setVirtual(B[k].b, true);
       touches.set(id, rec); return;
     }
@@ -7733,7 +7832,7 @@ FF.touch = (function () {
   function pEnd(id, X, Y) {
     const ctx = T.ctx || context(); const inp = FF.input; const R = inp.retro;
     const rec = touches.get(id); if (!rec) return; touches.delete(id);
-    if (rec.role === 'button') { btnEls[rec.btn] && btnEls[rec.btn].classList.remove('on'); if (B[rec.btn].b) inp.setVirtual(B[rec.btn].b, false); return; }
+    if (rec.role === 'button') { btnEls[rec.btn] && btnEls[rec.btn].classList.remove('on'); if (!rec.dead && B[rec.btn].b) inp.setVirtual(B[rec.btn].b, false); return; }
     if (rec.role === 'window') { inp.setVirtual(rec.win, false); return; }
     if (rec.role === 'stick') { stick = null; stickBase.style.display = 'none'; stickKnob.style.display = 'none'; setDirs(0, 0); return; }
     if (rec.role === 'lobtap') return;
@@ -7789,7 +7888,7 @@ FF.touch = (function () {
     const R = FF.input.retro;
     const g = game(); if ((!g || g.state !== 'play') && (R.aiming || R.steer || R.held)) { R.aiming = false; R.steer = null; R.held = false; }   // the play ended under the finger
     if (!T.active) return;
-    const key = ctx.name + '|' + ctx.buttons.join(',') + '|' + JSON.stringify(ctx.labels || {}) + '|' + !!document.fullscreenElement;
+    const key = ctx.name + '|' + ctx.buttons.join(',') + '|' + JSON.stringify(ctx.labels || {}) + '|' + JSON.stringify(ctx.pad || null) + '|' + !!document.fullscreenElement;
     if (key !== layoutKey) { layoutKey = key; relayout(); }
     // the stick is released when the context stops wanting it (a play ends mid-drag)
     if (!ctx.stick && stick) { stick = null; stickBase.style.display = 'none'; stickKnob.style.display = 'none'; setDirs(0, 0); }
@@ -8355,9 +8454,17 @@ FF.legends = (function () {
       const y = py + i * (opts.step || 14);
       const on = i === sel;
       if (on) { FF.text(x, '>', px - 10, y, { color: '#ffe14a', outline: '#000' }); }
-      FF.text(x, it, px, y, { color: on ? '#ffe14a' : '#fff', outline: '#000', scale: opts.scale || 1 });
+      const lock = opts.locked && opts.locked[i];
+      FF.text(x, it, px, y, { color: on ? '#ffe14a' : (lock ? '#8a90a8' : '#fff'), outline: '#000', scale: opts.scale || 1 });
+      if (lock) padlock(x, px + FF.textWidth(it, { scale: opts.scale || 1 }) + 5, y - 1, on ? '#ffe14a' : '#8a90a8');
       FF.tapRow(px - 12, y - 3, Math.max(120, FF.textWidth(it, { scale: opts.scale || 1 }) + 16), (opts.step || 14), i, sel, { n: items.length });
     });
+  }
+  // a 7x8 pixel padlock (locked menu rows in the free version)
+  function padlock(x, px, py, c) {
+    FF.rect(x, px - 1, py - 1, 9, 10, '#000');
+    FF.rect(x, px + 1, py, 1, 4, c); FF.rect(x, px + 5, py, 1, 4, c); FF.rect(x, px + 2, py, 3, 1, c);
+    FF.rect(x, px, py + 3, 7, 5, c); FF.rect(x, px + 3, py + 5, 1, 2, '#000');
   }
   function header(x, title, sub) {
     FF.rect(x, 0, 0, W, 26, '#111'); FF.rect(x, 0, 26, W, 2, '#ffe14a');
@@ -8460,21 +8567,73 @@ FF.legends = (function () {
   S.mainmenu = {
     items: ['EXHIBITION', 'SUPERSTAR MODE', 'HALL OF FAME', 'FRANCHISE MODE', 'PRACTICE', 'PLAYBOOK', 'ROSTERS', 'OPTIONS', 'HOW TO PLAY'],
     enter() { this.sel = this.sel || 0; FF.audio.music('menu'); },
+    scenes: ['exhibition', 'superstar', 'hallOfFame', 'franchise', 'practice', 'playEditor', 'rosters', 'options', 'howto'],
+    gate: ['exhibition', 'superstar', 'hallOfFame', 'franchise', 'practice', 'playbook', 'rosters', 'options', 'howto'],
     update(dt, input) {
       this.sel = navUpDown(input, this.sel, this.items.length);
       if (confirm(input)) {
         FF.audio.play('select');
-        const sc = ['exhibition', 'superstar', 'hallOfFame', 'franchise', 'practice', 'playEditor', 'rosters', 'options', 'howto'][this.sel];
+        if (FF.store.locked(this.gate[this.sel])) { FF.go('unlock', { reason: this.gate[this.sel] === 'exhibition' ? 'trial' : 'locked', item: this.items[this.sel] }); return; }
+        const sc = this.scenes[this.sel];
         FF.go(sc, sc === 'hallOfFame' ? { from: 'menu' } : undefined);
       }
+      if (input.pressed('UNLOCK')) { FF.audio.play('select'); FF.go('unlock', {}); return; }
       if (back(input)) FF.go('title');
     },
     draw(x, t) {
       UI.bg(x); header(x, 'MAIN MENU');
-      menuList(x, this.items, this.sel, 110, 46, { step: 16, scale: 1 });
-      const desc = ['ONE GAME, ANY TWO TEAMS, YOU VS THE CPU.', 'CREATE A PLAYER AND LIVE A CAREER LOCKED TO HIM.', 'RETIRED SUPERSTARS RANKED BY LEGACY SCORE.', 'FANTASY DRAFT A TEAM, THEN COACH IT THROUGH SEASONS.', 'RUN ANY PLAY VS ANY COVERAGE, NO CLOCK.', 'EDIT ROUTES, READS AND RUNS; BUILD YOUR OWN PLAYS.', 'RENAME, RENUMBER AND RESTYLE THE PLAYERS ON ANY TEAM.', 'GAME LENGTH, RULES, DIFFICULTY, DISPLAY.', 'CONTROLS AND THE RULES OF 5-ON-5 FLAG.'][this.sel];
+      const locked = this.gate.map(g => FF.store.locked(g));
+      menuList(x, this.items, this.sel, 110, 46, { step: 16, scale: 1, locked });
+      if (!FF.store.full()) tbtn(x, 'UNLOCK FULL GAME', W - 82, 31, 76, ['UNLOCK'], true);
+      const free = !FF.store.full();
+      let desc = ['ONE GAME, ANY TWO TEAMS, YOU VS THE CPU.', 'CREATE A PLAYER AND LIVE A CAREER LOCKED TO HIM.', 'RETIRED SUPERSTARS RANKED BY LEGACY SCORE.', 'FANTASY DRAFT A TEAM, THEN COACH IT THROUGH SEASONS.', 'RUN ANY PLAY VS ANY COVERAGE, NO CLOCK.', 'EDIT ROUTES, READS AND RUNS; BUILD YOUR OWN PLAYS.', 'RENAME, RENUMBER AND RESTYLE THE PLAYERS ON ANY TEAM.', 'GAME LENGTH, RULES, DIFFICULTY, DISPLAY.', 'CONTROLS AND THE RULES OF 5-ON-5 FLAG.'][this.sel];
+      if (free && locked[this.sel]) desc = this.sel === 0 ? 'YOUR FREE GAME IS PLAYED - UNLOCK THE FULL GAME FOR MORE.' : 'PART OF THE FULL GAME - TAP TO SEE WHAT IT UNLOCKS.';
+      else if (free && this.sel === 0) desc = 'FREE VERSION: ONE GAME, ANY TWO TEAMS, YOU VS THE CPU.';
       footer(x, desc);
       FF.text(x, FF.touch && FF.touch.active ? 'TAP AN ITEM TO OPEN IT' : 'ARROWS: MOVE   ENTER: SELECT   ESC: BACK', W / 2, H - 16, { font: FONT3x5, color: '#aaa', align: 'center' });
+    },
+  };
+
+  /* ------------------------------------------- the Full Game unlock (app only) */
+  S.unlock = {
+    enter(args) { this.args = args || {}; this.sel = 0; FF.store.msg = null; FF.store.refresh(); FF.audio.music('menu'); },
+    items() { return FF.store.full() ? ['PLAY'] : ['UNLOCK FULL GAME' + (FF.store.price ? ' - ' + FF.store.price : ''), 'RESTORE PURCHASES', 'NOT NOW']; },
+    update(dt, input) {
+      const items = this.items(); this.sel = Math.min(this.sel, items.length - 1);
+      this.sel = navUpDown(input, this.sel, items.length);
+      if (confirm(input) && !FF.store.busy) {
+        FF.audio.play('select');
+        if (FF.store.full() || this.sel === 2) { FF.go('mainmenu'); return; }
+        if (this.sel === 0) FF.store.buy(); else FF.store.restore();
+      }
+      if (back(input) && !FF.store.busy) { FF.audio.play('back'); FF.go('mainmenu'); }
+    },
+    draw(x, t) {
+      UI.bg(x); header(x, 'FULL GAME');
+      const full = FF.store.full(), a = this.args;
+      const top = full ? 'EVERYTHING IS UNLOCKED. ENJOY THE GAME!'
+        : a.reason === 'trial' ? 'THAT WAS YOUR FREE GAME - THANKS FOR PLAYING!'
+        : a.reason === 'locked' && a.item ? a.item + ' IS PART OF THE FULL GAME.' : 'ONE PURCHASE UNLOCKS EVERYTHING.';
+      FF.text(x, top, W / 2, 33, { color: '#ffe14a', outline: '#000', align: 'center' });
+      const rows = [
+        ['SUPERSTAR MODE', 'YOUR CAREER, FROM DRAFT DAY TO THE HALL OF FAME'],
+        ['FRANCHISE MODE', 'DRAFT A TEAM AND COACH IT THROUGH SEASONS'],
+        ['UNLIMITED EXHIBITION', 'ANY TWO TEAMS, ANY DIFFICULTY, ANY TIME'],
+        ['PRACTICE, PLAYBOOK, ROSTERS', 'RUN ANY PLAY, BUILD YOUR OWN, EDIT ANY TEAM'],
+        ['GAME CENTER', 'THE HALL OF FAME LEADERBOARD AND 12 ACHIEVEMENTS'],
+      ];
+      FF.rect(x, 22, 45, W - 44, rows.length * 18 + 6, 'rgba(0,0,20,0.55)');
+      rows.forEach((r, i) => {
+        const y = 49 + i * 18;
+        FF.rect(x, 30, y + 2, 4, 4, full ? '#8cf38c' : '#ffe14a');
+        FF.text(x, r[0], 40, y, { color: '#fff', outline: '#000' });
+        FF.text(x, r[1], 40, y + 9, { font: FONT3x5, color: '#cfd8ff' });
+      });
+      const items = this.items();
+      menuList(x, items, this.sel, 96, 148, { step: 14 });
+      const msg = FF.store.msg;
+      if (msg) FF.text(x, msg, W / 2, 194, { font: FONT3x5, color: FF.store.busy ? '#cfd8ff' : '#ffe14a', align: 'center' });
+      footer(x, full ? 'THANKS FOR SUPPORTING AN INDEPENDENT GAME.' : 'A ONE-TIME PURCHASE. NO ADS. NO SUBSCRIPTION.');
     },
   };
 
@@ -8821,11 +8980,11 @@ FF.legends = (function () {
       'CONTROLS': [
         'TOUCH CONTROLS APPEAR WHEN A FINGER TOUCHES THE SCREEN.',
         'LEFT THUMB: A FLOATING STICK MOVES YOUR PLAYER.',
-        'RIGHT THUMB: BUTTONS LABELED FOR THE MOMENT - SNAP, JUKE,',
-        'SPIN, PULL, SWAT, DIVE, SPRINT (HOLD), SWITCH, AUD.',
+        'RIGHT THUMB: FOUR BUTTONS THAT NEVER MOVE - EACH SAYS WHAT',
+        'IT DOES NOW. BOTTOM: SNAP/RUN/JUKE/PULL. RIGHT: SPIN/SWAT.',
+        'LEFT: SPRINT (HOLD, ~3 SECONDS A PLAY). TOP: SWITCH.',
         'THROW: TAP THE RECEIVER ON THE FIELD (OR HIS WINDOW, WITH',
         'OPTIONS > PASSING > WINDOWS). TAP = LOB, HOLD = BULLET.',
-        'SPRINT LASTS ~3 SECONDS A PLAY - WATCH THE BAR UNDER YOU.',
         'PLAY CALLING: TAP A TILE. FLIP / NO HUDDLE / RESET ARE THE',
         'BUTTONS ABOVE THE GRID. PLAY ART SHOWS THE CALL ON THE FIELD.',
         'MENUS: TAP A ROW, - / + TO CHANGE A SETTING. OK AND BACK ARE',
@@ -8845,7 +9004,7 @@ FF.legends = (function () {
         'STUTTER, OR HOLD AND DRAG TO STEER. DEFENSE: HOLD SKIP.',
       ],
       'OFFENSE': [
-        'PRE-SNAP: SNAP. AUD CALLS AN AUDIBLE (TAP ONE OF THREE).',
+        'PRE-SNAP: SNAP. AUDIBLE (TOP CORNER) CHANGES THE PLAY.',
         'TAP MOTION: RECEIVER 1 RUNS ACROSS - SNAP WHILE HE MOVES.',
         'QB: THE PASSING WINDOWS OPEN AFTER THE SNAP (OR, WITH',
         'PASSING > TAP RECEIVER, BADGES SHOW OVER EACH RECEIVER).',
@@ -8858,7 +9017,7 @@ FF.legends = (function () {
         '7-SECOND PASS CLOCK.',
       ],
       'DEFENSE': [
-        'PRE-SNAP: SWITCH CHANGES YOUR DEFENDER. AUD AUDIBLES.',
+        'PRE-SNAP: SWITCH CHANGES YOUR DEFENDER. AUDIBLE (TOP CORNER).',
         'DO NOT CROSS THE LINE BEFORE THE SNAP: OFFSIDE, 5 YARDS.',
         'ONLY A DEFENDER BEHIND THE DASHED RUSH LINE (7 YARDS) AT THE',
         'SNAP MAY RUSH. ANYONE ELSE CROSSING EARLY: ILLEGAL RUSH.',
@@ -8932,7 +9091,14 @@ FF.legends = (function () {
       if (this.args.mode === 'superstar') FF.go('postgame', { game: g, career: this.args.career });
       else if (this.args.mode === 'training') FF.go('trainingResult', { game: g });
       else if (this.args.mode === 'franchise') FF.go('franchisePostgame', { game: g });
+      else if (this.args.mode === 'exhibition') this.exhibitionOver(g);
       else FF.go('mainmenu');
+    },
+    // free version: the exhibition game is the trial; it is used once the game is finished or quit after halftime
+    exhibitionOver(g) {
+      if (FF.store.full()) { FF.go('mainmenu'); return; }
+      if (g.state === 'final' || g.half >= 2 || g.ot) FF.store.useTrial();
+      FF.go(FF.store.trialLeft() <= 0 ? 'unlock' : 'mainmenu', { reason: 'trial' });
     },
     update(dt, input) {
       const g = this.game;
@@ -8943,7 +9109,7 @@ FF.legends = (function () {
         if (confirm(input)) {
           if (g.pauseSel === 0) { g.paused = false; FF.audio.play('select'); return; }
           if (g.pauseSel === 1) { FF.settings.hints = FF.settings.hints === false; FF.saveSettings(); FF.audio.play('tick'); return; }
-          FF.audio.play('back'); if (this.args.mode === 'superstar') FF.go('superstar'); else if (this.args.mode === 'training') this.finished(g); else if (this.args.mode === 'franchise') FF.go('franchise'); else FF.go('mainmenu'); return;
+          FF.audio.play('back'); if (this.args.mode === 'superstar') FF.go('superstar'); else if (this.args.mode === 'training') this.finished(g); else if (this.args.mode === 'franchise') FF.go('franchise'); else if (this.args.mode === 'exhibition') this.exhibitionOver(g); else FF.go('mainmenu'); return;
         }
       }
       if (this.args.mode === 'practice' && g.state === 'playcall' && !g.callUI.humanSide) { }

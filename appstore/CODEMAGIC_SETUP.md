@@ -4,8 +4,8 @@ The repo already holds everything the build needs: the Xcode project (`native/io
 the Game Center plugin, the icon and splash, the privacy manifest and `codemagic.yaml` at the root. What's
 left is linking your accounts. It takes about 20 minutes, once.
 
-**Before you start** you need: the Apple Developer Program membership active, and the Paid Apps agreement accepted
-(only needed if you sell the app; the Free Apps agreement is automatic).
+**Before you start** you need: the Apple Developer Program membership active. The build itself doesn't need the Paid
+Apps agreement, but the Full Game in-app purchase won't load in TestFlight until that agreement is active.
 
 ---
 

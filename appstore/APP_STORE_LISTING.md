@@ -15,10 +15,28 @@ Everything to paste into App Store Connect, in the order the screens ask for it.
 | Age rating | Answer **None / No** to every question (no violence beyond none, no gambling, no contests, no user-generated content, no messaging, no web browsing, no ads). Expected result: **4+** |
 | Copyright | `2026 <your name or company>` |
 
-## Pricing
-Pick one:
-- **Paid**: set a price tier (for example $2.99). The build is ready as-is.
-- **Free**: also ready as-is. A free download with a paid unlock needs extra in-app purchase code; see "Later" at the bottom.
+## Pricing: free download + one in-app purchase
+- **App price**: Free.
+- The free version plays **one exhibition game**. Everything else (Superstar, Franchise, unlimited Exhibition, Practice,
+  Playbook, Rosters, Hall of Fame) is the **Full Game**, a one-time in-app purchase at **$1.99**. Options and How to Play
+  stay open. The price shown in the game comes from the App Store, in the player's own currency.
+- Needs the **Paid Apps agreement** (Business → Agreements, Tax and Banking) to be active, even though the app is free.
+
+## In-App Purchase (Monetization → In-App Purchases → +)
+| Field | Value |
+|---|---|
+| Type | **Non-Consumable** |
+| Reference name | `Full Game` |
+| Product ID | `com.jarmold.flagfootball94.fullgame` ← exactly this; the game asks for this ID |
+| Price | $1.99 (United States), all countries and regions |
+| Family Sharing | On (optional; nicer for families with one Apple Account each) |
+| Display name (30) | `Full Game` |
+| Description (45) | `Superstar, Franchise and unlimited games.` |
+| Review screenshot | `appstore/iap_review.png` (the unlock screen) |
+| Review notes | `Unlocks every mode. Tap UNLOCK FULL GAME on the main menu, or any locked mode.` |
+
+The first in-app purchase must be submitted **with** an app version: on the version 1.0 page, under
+**In-App Purchases and Subscriptions**, click **+** and add Full Game before you submit for review.
 
 ## App Privacy
 - Data collection: **"No, we do not collect data from this app"**. That gives the "Data Not Collected" label.
@@ -27,7 +45,7 @@ Pick one:
 
 ## Version 1.0 page
 - **Promotional text (170)**:
-  `Call the play, tap your receiver and let it fly. A 16-bit football game built for your phone - with a full Superstar career from draft day to the Hall of Fame.`
+  `Call the play, tap your receiver and let it fly. Free to try - one purchase unlocks a full Superstar career from draft day to the Hall of Fame.`
 - **Keywords (100)**:
   `football,flag,retro,16-bit,pixel,arcade,sports,career,franchise,playbook,touchdown,quarterback,coach`
 - **Support URL**: `https://jarmold24.github.io/flag-football-94/support.html`
@@ -53,6 +71,9 @@ EVERYTHING ELSE
 - Broadcast-style play calls, instant replay, day and night games, rain and snow
 - Game Center leaderboard and achievements
 - No ads. No accounts. Plays offline.
+
+FREE TO TRY
+The free download includes an exhibition game. The Full Game, a one-time in-app purchase, unlocks Superstar Mode, Franchise Mode, unlimited exhibition games, Practice, the playbook editor and rosters. No subscription.
 
 An original game: all teams, players and logos are fictional.
 ```
@@ -101,11 +122,12 @@ Turn Game Center on for the app, then create these with exactly these IDs. The g
 ```
 Flag Football '94 is a single-player, offline football game. No account or sign-in is needed; Game Center is optional (leaderboard + achievements).
 
+Free version and in-app purchase: the free download plays one exhibition game; the other modes show a padlock. The non-consumable in-app purchase "Full Game" (com.jarmold.flagfootball94.fullgame) unlocks everything. To test it with a sandbox account: tap UNLOCK FULL GAME (top right of the main menu) or any locked mode, then UNLOCK FULL GAME - $1.99. RESTORE PURCHASES is on the same screen.
+
 How to play: tap anywhere on the title screen, choose EXHIBITION, pick two teams and tap KICK OFF. On offense tap a formation, then a play; tap SNAP, then tap a receiver on the field to throw. SUPERSTAR MODE is the career mode (create a player, then enter the draft or sign with a team).
 
 The game is landscape-only and supports iPhone and iPad. All teams, players, logos and names are original and fictional; the game is not affiliated with any league.
 ```
 
 ## Later (not needed for 1.0)
-- A free download with a "Full Game" in-app purchase needs StoreKit code and a Restore Purchases button. That's a follow-up build if you choose that model.
-- An app preview video (15–30 s of gameplay) is optional but very effective.
+- An app preview video (15-30 s of gameplay) is optional but very effective.
