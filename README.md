@@ -1,4 +1,4 @@
-# Flag Football '94 — PC, phone & iOS build (v0.35)
+# Flag Football '94 — PC, phone & iOS build (v0.36)
 
 A 16-bit style 5-on-5 flag football game built from the design document, with the
 Madden '94 play-calling grid, passing windows, and camera, plus a **Superstar** career mode.
@@ -122,6 +122,20 @@ Rebuild the sheet with `cd tools/prerender && npm install && node render.js` (ne
 - Score strip with team emblems and a possession arrow; receiver windows centered; dust on cuts,
   spins and dives; the pulled flag tumbles away; screen shake on a sack; scene fades; play-call
   diagrams no longer spill out of their tiles; menus sit over a dusk stadium.
+
+## v0.36 — a third visual pass: the sidelines and the stands come alive
+- **The bench.** The subs sit on it now (a seated clip, hands on the knees, breathing) instead of standing in a row,
+  so the brown strip on each apron reads as a bench.
+- **The line before the snap.** The quarterback under center scans the defense (the head turns left, center, right
+  as the body rocks); each defender rocks from foot to foot in his crouch instead of freezing.
+- **Sprint trail.** A player at full speed kicks up specks of turf behind him; in the rain they are droplets, in the
+  snow a white spray. Cuts, spins and dives keep their burst.
+- **Midfield emblem.** The home team's emblem is painted at the 35 at real size (a ten-yard logo, translucent like
+  turf paint) instead of a four-yard stamp that read as a stray blob from far away.
+- **The crowd roars.** Two more crowd frames with everyone on their feet and arms in the air, shown at a faster
+  bounce while the stands are excited (touchdowns, big plays, a sack on the visitors); the everyday bounce no longer
+  reshuffles the fans between frames. The field surface itself is left alone: it reads clean at this resolution and
+  more texture would only be noise.
 
 ## v0.35 — the first drive teaches itself, defense you can feel, a share card, more music
 - **Guided first drive.** The first exhibition game (with control hints on) teaches the controls inside the game:
