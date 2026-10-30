@@ -7193,9 +7193,12 @@ FF.share = (() => {
       else {
         let file = null;
         try { const blob = await (await fetch(url)).blob(); file = new File([blob], 'flag-football-94.png', { type: 'image/png' }); } catch (e) { }
-        if (file && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file], title, text }); last = 'web'; } catch (e) { last = e && e.name === 'AbortError' ? 'cancel' : 'download'; } }
+        // the claude.ai page: the host saves files for the page (a plain download link does nothing there)
+        const dl = window.claude && typeof window.claude.use === 'function' ? await window.claude.use('downloads').catch(() => null) : null;
+        if (dl && file) { try { await dl.save({ filename: 'flag-football-94.png', data: file }); last = 'download'; } catch (e) { last = e && e.code === 'declined' ? 'cancel' : 'error'; } }
+        else if (file && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file], title, text }); last = 'web'; } catch (e) { last = e && e.name === 'AbortError' ? 'cancel' : 'download'; } }
         else last = 'download';
-        if (last === 'download') { const a = document.createElement('a'); a.href = url; a.download = 'flag-football-94.png'; document.body.appendChild(a); a.click(); a.remove(); }
+        if (last === 'download' && !dl) { const a = document.createElement('a'); a.href = url; a.download = 'flag-football-94.png'; document.body.appendChild(a); a.click(); a.remove(); }
       }
     } catch (e) { last = 'error'; }
     busy = false; lastT = performance.now();
