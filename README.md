@@ -1,4 +1,4 @@
-# Flag Football '94 — PC, phone & iOS build (v0.33)
+# Flag Football '94 — PC, phone & iOS build (v0.34)
 
 A 16-bit style 5-on-5 flag football game built from the design document, with the
 Madden '94 play-calling grid, passing windows, and camera, plus a **Superstar** career mode.
@@ -118,6 +118,18 @@ Rebuild the sheet with `cd tools/prerender && npm install && node render.js` (ne
 - Score strip with team emblems and a possession arrow; receiver windows centered; dust on cuts,
   spins and dives; the pulled flag tumbles away; screen shake on a sack; scene fades; play-call
   diagrams no longer spill out of their tiles; menus sit over a dusk stadium.
+
+## v0.34 — the OK button out of the way, and a second animation pass
+- **Menus on a phone.** The OK pill sat over the right-hand - / + column on the Superstar creation and ratings
+  screens on notched iPhones: the safe-area inset pulled it inward. The corner pills (BACK, OK, FULL) now sit in the
+  true corners (the notch is mid-edge in landscape, so the corners are clear), OK narrows when the bar beside the
+  picture is narrow, and it lifts off any tappable row it would still cover.
+- **Swat**: one frame became three: a quick load, the leap with the arm straight up, the arm batting down through
+  the ball. **Juke**: two frames became three: a wide, low plant on the outside foot, the cut with a hard lean and
+  the free arm flung out, the recovery into the stride. **Flag pulled**: a braking skid with the weight back, then
+  straightening up, then a look back over the shoulder at the flag. **Dive**: a push-off frame before the stretch
+  and the layout. **Backpedal**: twelve frames (was eight) with the arms low and loose instead of held out in front.
+- **Impact spark.** A two-frame flash at the hands on a catch and at the ball on a swat.
 
 ## v0.33 — a real catch, and a smoother run
 **The catch.** It was two to four frames with planted feet and no reaction before the ball arrived. Now the
