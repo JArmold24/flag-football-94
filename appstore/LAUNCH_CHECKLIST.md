@@ -22,7 +22,7 @@ In order:
    `APP_STORE_LISTING.md`, with the review screenshot `iap_review.png`.
 9. **TestFlight**: install the build on your own iPhone and play a full game, a Superstar season and a retire.
    Check: saves survive closing the app; haptics; Game Center sign-in banner; an achievement unlocks; the
-   leaderboard opens from the Hall of Fame. Free version: finish one exhibition game and one Superstar game, see the unlock screen each time, buy the
+   leaderboard opens from the Hall of Fame; SHARE on the final stats opens the share sheet with the scorecard. Free version: finish one exhibition game and one Superstar game, see the unlock screen each time, buy the
    Full Game (TestFlight purchases are free, sandbox), delete and reinstall, check it unlocks again (or via Restore
    Purchases). Add friends as testers.
 10. **Fill the listing** from `APP_STORE_LISTING.md`: app information, pricing, App Privacy (Data Not Collected),

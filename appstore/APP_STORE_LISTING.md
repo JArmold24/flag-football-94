@@ -56,7 +56,7 @@ The first in-app purchase must be submitted **with** an app version: on the vers
 ```
 Five on five. No pads, no tackles - pull the flag.
 
-Flag Football '94 is a fast, 16-bit style football game built for your phone. Pick a formation, call your play, snap it and tap the receiver you want - a tap throws a lob, a hold fires a bullet. Juke, spin and dive your way downfield, or pull flags and jump routes on defense.
+Flag Football '94 is a fast, 16-bit style football game built for your phone. Pick a formation, call your play, snap it and tap the receiver you want - a tap throws a lob, a hold fires a bullet. Juke, spin and dive your way downfield, or pull flags and jump routes on defense. Your first drive teaches you the controls as you play it.
 
 SUPERSTAR CAREER
 Create your player and live his whole career. Enter the draft or sign with the team you choose. Every snap earns a play grade - get open, run your route, win your matchup - and your grades build your coach's trust: rotation player, starter, featured, franchise. Earn XP, upgrade your ratings, sign in free agency, be voted captain, age, retire, and find out if your legacy makes the Hall of Fame.
@@ -69,6 +69,7 @@ EVERYTHING ELSE
 - Three play styles: Classic, Retro Sideline and Retro Overhead
 - A playbook editor to build your own routes and plays
 - Broadcast-style play calls, instant replay, day and night games, rain and snow
+- Chiptune soundtrack and a share card for your big wins
 - Game Center leaderboard and achievements
 - No ads. No accounts. Plays offline.
 

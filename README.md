@@ -1,4 +1,4 @@
-# Flag Football '94 — PC, phone & iOS build (v0.34)
+# Flag Football '94 — PC, phone & iOS build (v0.35)
 
 A 16-bit style 5-on-5 flag football game built from the design document, with the
 Madden '94 play-calling grid, passing windows, and camera, plus a **Superstar** career mode.
@@ -43,6 +43,7 @@ Keyboard-native: every prompt on screen names the real key.
 | **V** | Show the called play's art before the snap (toggle) |
 | **R** | Instant replay of the last play (on the result screen). In the replay: Space pause, Left/Right scrub, Up/Down camera, R speed, Enter done |
 | P / M | Pause / mute |
+| **X** | Share card: a 16-bit scorecard PNG of the final (or your Superstar game / season) to share or save |
 
 **Play calling** — arrows move the cursor, Enter picks (or press 1–3 for a tile inside the striped
 window). Formation first, then one of its 8 plays. Run plays are locked out in the no-run zones.
@@ -54,8 +55,11 @@ it (by default the QB can always run; Options → QB Can Run), except in a no-ru
 where it is pass only. Handoffs and pitches happen by themselves on run plays. Ball in the air:
 Space dives. Ball carrier: Space jukes, E spins, Shift sprints. 7-second pass clock.
 
-**Defense** — Pre-snap: Tab switches your defender, Q audibles. Don't cross the line before the
-snap. Space pulls the flag in reach (Space away from the runner lunges), E swats a pass. Reach the
+**Defense** — Pre-snap: Tab switches your defender, Q audibles; a caret marks the receiver your man covers
+(a dashed ring, your zone). Don't cross the line before the snap. Space pulls the flag in reach — the ring under
+your feet goes green when you are (amber a lunge away) — Space away from the runner lunges, E swats a pass. When a
+pass goes up the cursor jumps to the defender nearest the landing spot, and to the nearest man on the catch
+(Options → Auto Switch On Pass). Reach the
 QB in the pocket and pull for a sack. Your controlled defender pulls on the button; the other four
 are CPU-run and pull automatically. On Rookie (or with Auto Flag Pull on) your pulls are automatic
 too. A controls card shows on the first snap of every game; Esc opens the pause menu at any time.
@@ -118,6 +122,27 @@ Rebuild the sheet with `cd tools/prerender && npm install && node render.js` (ne
 - Score strip with team emblems and a possession arrow; receiver windows centered; dust on cuts,
   spins and dives; the pulled flag tumbles away; screen shake on a sack; scene fades; play-call
   diagrams no longer spill out of their tiles; menus sit over a dusk stadium.
+
+## v0.35 — the first drive teaches itself, defense you can feel, a share card, more music
+- **Guided first drive.** The first exhibition game (with control hints on) teaches the controls inside the game:
+  a banner under the scoreboard says what to do, the moment to do it runs at a third speed, and the button (phone)
+  or the receiver it means glows. Six lessons, each shown once and saved: snap, throw to the open man, run, juke
+  a closing defender; your man and SWITCH, pull when your ring goes green. Skip it from the pause menu; replay it
+  from Options.
+- **Defense feel.** The ring under your defender pulses green when a flag is within reach (PULL takes it) and amber
+  a lunge away; on a phone the PULL button glows too. Before the throw a caret bobs over the receiver your man
+  covers, or a dashed ring shows your zone on the turf. **Auto switch** (on by default): when the pass goes up the
+  cursor moves to the defender nearest the landing spot, and to the nearest man at the catch, like a SWITCH press
+  would; a white ring spreads from the new man so the eye finds him.
+- **Audio pass.** Every tune has a drum lane now (kick, snare, hats). Two menu tunes, three huddle loops (a new one
+  each drive), two halftime/stats tunes and a draft-day vamp trade off. A longer touchdown fanfare, a victory or
+  defeat jingle at the final whistle, a punchier catch, and new sounds for the spin, the hurdle, XP, the unlock, and
+  the home crowd clapping up a last-down stand in the final two minutes.
+- **Share card.** X (keyboard) or SHARE (phone) on the final stats, the Superstar post-game and the season review
+  renders a 1280x720 16-bit scorecard — emblems, score, player of the game, or your grade and stat line — and hands
+  it to the share sheet (iPhone: Messages, Photos, AirDrop; browsers that can share files), otherwise it downloads.
+- **Carrier moves.** The juke picks its clip from where the cut goes on screen: left / right tilt, or a dip-and-twist
+  toward or away from the camera (new jukeIn / jukeOut clips). The spin is two frames with the ball switching arms.
 
 ## v0.34 — the OK button out of the way, and a second animation pass
 - **Menus on a phone.** The OK pill sat over the right-hand - / + column on the Superstar creation and ratings
