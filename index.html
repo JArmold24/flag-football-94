@@ -2827,8 +2827,23 @@ FF.sheet = (function () {
     if (!META || !FF.SHEET_PNG) { cb && cb(false); return; }
     const im = new Image();
     im.onload = () => {
-      const c = FF.makeCanvas(im.width, im.height); const g = c.getContext('2d'); g.drawImage(im, 0, 0);
-      data = g.getImageData(0, 0, im.width, im.height).data; SW = im.width; ready = true; cb && cb(true);
+      // read the sheet in bands: a canvas the size of the whole sheet (2048 x 13000+) is past the limit on some
+      // desktop browsers and GPUs, which hand back a blank canvas without a word - the players vanished and only
+      // their shadows drew. A 2048 x 1024 band is safe everywhere.
+      try {
+        const w = im.width, h = im.height, BAND = 1024;
+        const out = new Uint8ClampedArray(w * h * 4);
+        const c = document.createElement('canvas'); c.width = w; c.height = BAND; const g = c.getContext('2d', { willReadFrequently: true });
+        let seen = 0;
+        for (let y0 = 0; y0 < h; y0 += BAND) {
+          const bh = Math.min(BAND, h - y0);
+          g.clearRect(0, 0, w, BAND); g.drawImage(im, 0, y0, w, bh, 0, 0, w, bh);
+          const d = g.getImageData(0, 0, w, bh).data; out.set(d, y0 * w * 4);
+          if (!seen) for (let i = 3; i < d.length; i += 4096) if (d[i]) { seen = 1; break; }
+        }
+        if (!seen) throw new Error('sheet decoded blank');
+        data = out; SW = w; ready = true; cb && cb(true);
+      } catch (e) { console.warn('sprite sheet unavailable, using drawn sprites', e); cb && cb(false); }
     };
     im.onerror = () => cb && cb(false);
     im.src = FF.SHEET_PNG;
@@ -3126,13 +3141,15 @@ FF.data = (function () {
     CROSS: [[0, 6], [-14, 11]], QUICKOUT: [[0, 4], [6, 4.5]], CORNERPOST: [[0, 8], [4, 12], [-4, 20]], BUBBLE: [[4, -1.5], [8, 2]],
     FLATOUT: [[4, 2], [9, 3]], CENTERPOP: [[0, 4], [0, 4.5]], LEVELS: [[0, 6], [-8, 6.5]], MIDDLE: [[0, 12], [0, 12.5]], CHECK: [[-2, -1], [-2, 1]],
     OPTION: [[0, 5], [0, 8]],
+    ANGLE: [[4, 2], [-3, 6]], WHIP: [[0, 3], [-3, 4], [4, 5]], DEEPCROSS: [[0, 8], [-16, 15]], CROSSFLAT: [[-5, 1], [-10, 2.5]],   // the back's angle, the whip, the deep over, a flat run with the roll
   };
   // Run paths for the ball carrier (relative to carrier start, dx mirrored by play side)
   // Handoff paths are relative to the mesh point (the QB); pitch paths are relative to the carrier's start.
   // dx > 0 runs toward the carrier's own side of the field.
   const RUNS = {
-    DIVE: [[0.5, 3], [1, 26]], SWEEP: [[4, 2], [8, 6], [9, 26]], COUNTER: [[-2, 0.5], [3, 3], [6, 7], [7, 26]], DRAW: [{ wait: 0.6 }, [0.5, 3], [1, 26]],
+    DIVE: [[0.5, 3], [1, 26]], SWEEP: [[4, 2], [8, 6], [9, 26]], COUNTER: [[-1, 0.5], [2.5, 3], [5.5, 7], [6.5, 26]], DRAW: [{ wait: 0.25 }, [0.5, 3], [1, 26]],
     TOSS: [[5, 1], [8, 5], [9, 26]], OPTION: [[3, 1.5], [6, 5], [7, 26]], SHOVEL: [[0, 3], [0.5, 26]], REVERSE: [[-6, 1], [-11, 4], [-12, 26]],
+    CUTBACK: [[-2, 1.5], [-5, 5], [-6, 26]], KEEP: [{ wait: 0.22 }, [1.5, 3], [2, 26]], JET: [[-3, 1], [-7, 4], [-8, 26]],   // a receiver near the sideline bends a pitch back inside; the quarterback keeps behind a fake
   };
 
   /* ------------------------------------------------------- formations */
@@ -3148,30 +3165,31 @@ FF.data = (function () {
     { name: 'EMPTY', slots: { QB: [0, -6], C: [0, 0], WR1: [-12, -0.5], WR2: [5, -0.5], WR3: [12, 0] } },
     { name: 'RED ZONE', slots: { QB: [0, -5], C: [0, 0], WR1: [-6, 0], WR3: [6, 0], RB: [-2.5, -6] } },
   ];
-  // Plays: 6 per formation. routes keyed by slot; labels map A/B/C/D to slots.
-  // Run plays: type 'run', carrier slot, exchange 'handoff'|'pitch', path.
+  // Plays: 8 per formation. routes keyed by slot; labels map A/B/C/D to slots.
+  // Run plays: type 'run', carrier slot, exchange 'handoff'|'pitch'|'keep' (the quarterback keeps it behind a fake), path.
+  // jet: that receiver goes in motion by himself once the line is set and takes the handoff at speed.
   const P = (name, routes, labels, extra) => Object.assign({ name, type: 'pass', routes, labels }, extra || {});
-  const R = (name, carrier, exchange, path, routes, labels) => ({ name, type: 'run', carrier, exchange, path, routes, labels });
+  const R = (name, carrier, exchange, path, routes, labels, extra) => Object.assign({ name, type: 'run', carrier, exchange, path, routes, labels }, extra || {});
   const PLAYS = [
     [ // SPREAD
       P('FOUR VERTS', { WR1: 'GO', WR2: 'SEAM', WR3: 'GO', C: 'DELAY' }, ['WR1', 'WR2', 'WR3', 'C']),
       P('SLANTS', { WR1: 'SLANT', WR2: 'FLAT', WR3: 'SLANT', C: 'CHECK' }, ['WR1', 'WR3', 'WR2', 'C']),
       P('MESH', { WR1: 'DRAG', WR2: 'CORNER', WR3: 'DRAG', C: 'DELAY' }, ['WR1', 'WR3', 'WR2', 'C']),
-      P('SMASH', { WR1: 'HITCH', WR2: 'CORNER', WR3: 'HITCH', C: 'SEAM' }, ['WR2', 'WR1', 'WR3', 'C']),
+      P('SMASH', { WR1: 'HITCH', WR2: 'CORNERPOST', WR3: 'HITCH', C: 'SEAM' }, ['WR2', 'WR1', 'WR3', 'C']),
       P('CENTER SEAM', { WR1: 'OUT', WR2: 'FLAT', WR3: 'OUT', C: 'SEAM' }, ['C', 'WR1', 'WR3', 'WR2']),
-      R('WR2 SWEEP', 'WR2', 'handoff', 'SWEEP', { WR1: 'GO', WR3: 'HITCH', C: 'CHECK' }, ['WR1', 'WR3', 'C', 'C']),
-      P('DIG-WHEEL', { WR1: 'DIG', WR2: 'WHEEL', WR3: 'COMEBACK', C: 'CHECK' }, ['WR2', 'WR1', 'WR3', 'C']),
+      R('SLOT SHOVEL', 'WR2', 'pitch', 'SHOVEL', { WR1: 'GO', WR3: 'GO', C: 'CHECK' }, ['WR1', 'WR3', 'C', 'C']),
+      P('DAGGER', { WR1: 'DIG', WR2: 'SEAM', WR3: 'GO', C: 'CHECK' }, ['WR1', 'WR2', 'WR3', 'C']),
       P('CENTER OUT', { WR1: 'SLANT', WR2: 'SEAM', WR3: 'CORNER', C: 'FLATOUT' }, ['C', 'WR1', 'WR3', 'WR2']),
     ],
     [ // TRIPS
-      P('FLOOD', { WR1: 'CORNER', WR2: 'OUT', WR3: 'FLAT', C: 'DRAG' }, ['WR1', 'WR2', 'WR3', 'C']),
+      P('FLOOD', { WR1: 'POST', WR2: 'OUT', WR3: 'FLAT', C: 'DRAG' }, ['WR1', 'WR2', 'WR3', 'C']),
       P('TRIPS SCREEN', { WR1: 'SCREEN', WR2: 'HITCH', WR3: 'GO', C: 'CHECK' }, ['WR1', 'WR2', 'WR3', 'C']),
       P('CORNER-FLAT', { WR1: 'FLAT', WR2: 'CORNER', WR3: 'SLANT', C: 'DELAY' }, ['WR2', 'WR1', 'WR3', 'C']),
       P('STICK', { WR1: 'STICK', WR2: 'GO', WR3: 'OUT', C: 'CHECK' }, ['WR1', 'WR3', 'WR2', 'C']),
-      R('BUBBLE PITCH', 'WR3', 'pitch', 'TOSS', { WR1: 'HITCH', WR2: 'GO', C: 'CHECK' }, ['WR1', 'WR2', 'C', 'C']),
+      R('TRIPS PITCH', 'WR3', 'pitch', 'CUTBACK', { WR1: 'HITCH', WR2: 'GO', C: 'CHECK' }, ['WR1', 'WR2', 'C', 'C']),
       P('SPOT', { WR1: 'SNAG', WR2: 'CORNER', WR3: 'FLAT', C: 'DELAY' }, ['WR1', 'WR2', 'WR3', 'C']),
       P('TRIPS VERTS', { WR1: 'SEAM', WR2: 'GO', WR3: 'FADE', C: 'CHECK' }, ['WR2', 'WR1', 'WR3', 'C']),
-      P('TRIPS WHEEL', { WR1: 'WHEEL', WR2: 'SLANT', WR3: 'CORNER', C: 'DELAY' }, ['WR1', 'WR3', 'WR2', 'C']),
+      R('JET SWEEP', 'WR1', 'handoff', 'JET', { WR2: 'GO', WR3: 'CORNER', C: 'CHECK' }, ['WR2', 'WR3', 'C', 'C'], { jet: 'WR1' }),   // the jet runs to the empty side
     ],
     [ // BUNCH
       P('BUNCH CROSS', { WR1: 'DRAG', WR2: 'GO', WR3: 'OUT', C: 'CHECK' }, ['WR1', 'WR3', 'WR2', 'C']),
@@ -3180,37 +3198,37 @@ FF.data = (function () {
       P('QUICK OUT', { WR1: 'QUICKOUT', WR2: 'SLANT', WR3: 'ARROW', C: 'SEAM' }, ['WR3', 'WR1', 'WR2', 'C']),
       R('SHOVEL OPTION', 'WR1', 'pitch', 'SHOVEL', { WR2: 'GO', WR3: 'FLAT', C: 'CHECK' }, ['WR2', 'WR3', 'C', 'C']),
       P('FADE', { WR1: 'FLAT', WR2: 'SEAM', WR3: 'FADE', C: 'DELAY' }, ['WR3', 'WR2', 'WR1', 'C']),
-      P('BUNCH LEVELS', { WR1: 'SHALLOW', WR2: 'LEVELS', WR3: 'CORNER', C: 'CHECK' }, ['WR2', 'WR3', 'WR1', 'C']),
-      R('BUNCH TOSS', 'WR3', 'pitch', 'TOSS', { WR1: 'GO', WR2: 'SEAM', C: 'CHECK' }, ['WR1', 'WR2', 'C', 'C']),
+      P('BUNCH LEVELS', { WR1: 'SHALLOW', WR2: 'LEVELS', WR3: 'CORNER', C: 'FLAT' }, ['WR2', 'WR3', 'WR1', 'C']),
+      P('WHIP-OUT', { WR1: 'WHIP', WR2: 'GO', WR3: 'FLAT', C: 'DELAY' }, ['WR1', 'WR3', 'WR2', 'C']),
     ],
     [ // STACK
-      P('STACK RELEASE', { WR1: 'GO', WR2: 'OUT', WR3: 'POST', C: 'CHECK' }, ['WR2', 'WR3', 'WR1', 'C']),
+      P('STACK RELEASE', { WR1: 'GO', WR2: 'OUT', WR3: 'DIG', C: 'CHECK' }, ['WR2', 'WR3', 'WR1', 'C']),
       P('HITCH-GO', { WR1: 'HITCHGO', WR2: 'FLAT', WR3: 'HITCH', C: 'DELAY' }, ['WR1', 'WR3', 'WR2', 'C']),
       P('DOUBLE POST', { WR1: 'POST', WR2: 'SLANT', WR3: 'POST', C: 'CHECK' }, ['WR1', 'WR3', 'WR2', 'C']),
       P('OUT-UP', { WR1: 'OUTUP', WR2: 'HITCH', WR3: 'OUT', C: 'SEAM' }, ['WR1', 'WR3', 'WR2', 'C']),
       P('DRAG', { WR1: 'CURL', WR2: 'DRAG', WR3: 'CURL', C: 'DELAY' }, ['WR2', 'WR1', 'WR3', 'C']),
-      R('REVERSE PITCH', 'WR2', 'pitch', 'TOSS', { WR1: 'GO', WR3: 'SLANT', C: 'CHECK' }, ['WR1', 'WR3', 'C', 'C']),
-      P('STACK SMASH', { WR1: 'CORNER', WR2: 'HITCH', WR3: 'COMEBACK', C: 'SEAM' }, ['WR1', 'WR3', 'WR2', 'C']),
+      P('SWITCH VERTS', { WR1: 'SEAM', WR2: 'WHEEL', WR3: 'POST', C: 'CHECK' }, ['WR2', 'WR1', 'WR3', 'C']),
+      P('STACK SMASH', { WR1: 'POST', WR2: 'HITCH', WR3: 'OUT', C: 'SEAM' }, ['WR1', 'WR3', 'WR2', 'C']),
       P('CORNER-POST', { WR1: 'CORNERPOST', WR2: 'FLAT', WR3: 'DIG', C: 'CHECK' }, ['WR1', 'WR3', 'WR2', 'C']),
     ],
     [ // TWINS
       R('HB SWEEP', 'RB', 'handoff', 'SWEEP', { WR1: 'GO', WR2: 'SEAM', C: 'CHECK' }, ['WR1', 'WR2', 'C', 'C']),
-      R('HB COUNTER', 'RB', 'handoff', 'COUNTER', { WR1: 'GO', WR2: 'SEAM', C: 'CHECK' }, ['WR1', 'WR2', 'C', 'C']),
-      P('PA POST', { WR1: 'POST', WR2: 'CORNER', RB: 'FLAT', C: 'DELAY' }, ['WR1', 'WR2', 'RB', 'C'], { playAction: true }),
+      P('HB ANGLE', { WR1: 'GO', WR2: 'OUT', RB: 'ANGLE', C: 'CHECK' }, ['RB', 'WR2', 'WR1', 'C']),
+      P('PA POST', { WR1: 'CORNERPOST', WR2: 'CORNER', RB: 'FLAT', C: 'DELAY' }, ['WR1', 'WR2', 'RB', 'C'], { playAction: true }),
       P('FLAT-WHEEL', { WR1: 'DIG', WR2: 'CURL', RB: 'WHEEL', C: 'CHECK' }, ['RB', 'WR1', 'WR2', 'C']),
-      P('SLOT WHEEL', { WR1: 'POST', WR2: 'WHEEL', RB: 'FLAT', C: 'CHECK' }, ['WR2', 'WR1', 'RB', 'C']),
+      P('SLOT WHEEL', { WR1: 'DIG', WR2: 'WHEEL', RB: 'FLAT', C: 'CHECK' }, ['WR2', 'WR1', 'RB', 'C']),
       P('HB SCREEN', { WR1: 'GO', WR2: 'GO', RB: 'SCREEN', C: 'CHECK' }, ['RB', 'WR1', 'WR2', 'C']),
       P('TWINS SLANTS', { WR1: 'SLANT', WR2: 'SLANT', RB: 'FLAT', C: 'CHECK' }, ['WR2', 'WR1', 'RB', 'C']),
       R('HB TOSS', 'RB', 'pitch', 'TOSS', { WR1: 'GO', WR2: 'GO', C: 'CHECK' }, ['WR1', 'WR2', 'C', 'C']),
     ],
     [ // POWER
       R('HB DIVE', 'RB', 'handoff', 'DIVE', { WR1: 'HITCH', WR3: 'HITCH', C: 'CHECK' }, ['WR1', 'WR3', 'C', 'C']),
-      R('HB TOSS', 'RB', 'pitch', 'TOSS', { WR1: 'GO', WR3: 'GO', C: 'CHECK' }, ['WR1', 'WR3', 'C', 'C']),
-      P('OPTION PASS', { WR1: 'CORNER', WR3: 'POST', RB: 'OPTION', C: 'CHECK' }, ['WR1', 'WR3', 'RB', 'C'], { playAction: true }),
+      R('HB DRAW', 'RB', 'handoff', 'DRAW', { WR1: 'GO', WR3: 'GO', C: 'CHECK' }, ['WR1', 'WR3', 'C', 'C']),
+      P('OPTION PASS', { WR1: 'OUT', WR3: 'DIG', RB: 'OPTION', C: 'CHECK' }, ['WR1', 'WR3', 'RB', 'C'], { playAction: true }),
       P('BOOT', { WR1: 'DRAG', WR3: 'COMEBACK', RB: 'FLAT', C: 'DELAY' }, ['WR3', 'RB', 'WR1', 'C'], { playAction: true, roll: 1 }),
       P('CURL-FLAT', { WR1: 'CURL', WR3: 'CURL', RB: 'FLAT', C: 'SEAM' }, ['WR1', 'WR3', 'RB', 'C']),
       R('HB OPTION', 'RB', 'handoff', 'OPTION', { WR1: 'GO', WR3: 'GO', C: 'CHECK' }, ['WR1', 'WR3', 'C', 'C']),
-      R('REVERSE', 'WR3', 'handoff', 'REVERSE', { WR1: 'GO', RB: 'FLAT', C: 'CHECK' }, ['WR1', 'RB', 'C', 'C']),
+      P('YANKEE', { WR1: 'POST', WR3: 'DEEPCROSS', RB: 'FLAT', C: 'CHECK' }, ['WR3', 'WR1', 'RB', 'C'], { playAction: true }),
       P('PA DEEP', { WR1: 'GO', WR3: 'POST', RB: 'WHEEL', C: 'DELAY' }, ['WR3', 'WR1', 'RB', 'C'], { playAction: true }),
     ],
     [ // EMPTY
@@ -3227,11 +3245,11 @@ FF.data = (function () {
       P('CORNER-POST', { WR1: 'CORNER', WR3: 'POST', RB: 'FLAT', C: 'CHECK' }, ['WR1', 'WR3', 'RB', 'C']),
       P('FADE-SLANT', { WR1: 'FADE', WR3: 'SLANT', RB: 'FLAT', C: 'DELAY' }, ['WR1', 'WR3', 'RB', 'C']),
       P('SNAG FLAT', { WR1: 'SNAG', WR3: 'OUT', RB: 'FLAT', C: 'CHECK' }, ['WR1', 'RB', 'WR3', 'C']),
-      R('OPTION PITCH', 'RB', 'pitch', 'TOSS', { WR1: 'GO', WR3: 'CORNER', C: 'CHECK' }, ['WR1', 'WR3', 'C', 'C']),
+      R('QB KEEPER', 'QB', 'keep', 'KEEP', { WR1: 'FADE', WR3: 'FADE', RB: 'CROSSFLAT', C: 'CHECK' }, ['WR1', 'WR3', 'RB', 'C'], { playAction: true }),
       P('CENTER POP', { WR1: 'OUT', WR3: 'OUT', RB: 'SWING', C: 'CENTERPOP' }, ['C', 'WR1', 'WR3', 'RB']),
-      P('ROLL-OUT', { WR1: 'DRAG', WR3: 'CORNER', RB: 'FLAT', C: 'DELAY' }, ['WR3', 'RB', 'WR1', 'C'], { roll: 1 }),
+      P('ROLL-OUT', { WR1: 'DRAG', WR3: 'CORNER', RB: 'CROSSFLAT', C: 'DELAY' }, ['WR3', 'RB', 'WR1', 'C'], { roll: 1 }),
       R('HB DIVE', 'RB', 'handoff', 'DIVE', { WR1: 'GO', WR3: 'GO', C: 'CHECK' }, ['WR1', 'WR3', 'C', 'C']),
-      P('RED ZONE SLANTS', { WR1: 'SLANT', WR3: 'SLANT', RB: 'SWING', C: 'CENTERPOP' }, ['WR1', 'WR3', 'C', 'RB']),
+      P('RED ZONE SLANTS', { WR1: 'SLANT', WR3: 'SLANT', RB: 'SWING', C: 'DELAY' }, ['WR1', 'WR3', 'C', 'RB']),
     ],
   ];
   ROUTES.SWING = [[4, -1], [8, 1.5]];
@@ -3239,15 +3257,18 @@ FF.data = (function () {
   /* ------------------------------------------------- defensive fronts */
   // Each front: rush count, coverage scheme, 3 variants that change the rusher side / depth.
   // scheme: 'man' (all receivers), 'man3' (3 receivers, C free), zones list, 'spy'
+  // A variant can also change the scheme: BRACKET doubles the top receiver (cover 1's third look), ROBBER sits the
+  // free man underneath at 7 yards reading the quarterback instead of deep (man under's third), ZONE BLITZ sends two
+  // with three deep zones behind it (the blitz's third). Named variants show their name on the call tile.
   const FRONTS = [
-    { name: 'COVER 1', rush: 1, scheme: 'man', cushion: 4, variants: [{ side: 'L' }, { side: 'R' }, { side: 'M', cushion: 2 }] },
-    { name: 'COVER 2', rush: 1, scheme: 'zone', zones: [[-7, 13], [7, 13], [-9, 4], [9, 4]], variants: [{ side: 'L' }, { side: 'R' }, { side: 'M', depth: 0.8 }] },
-    { name: 'COVER 3', rush: 1, scheme: 'zone', zones: [[-9, 12], [0, 13], [9, 12], [0, 5]], variants: [{ side: 'L' }, { side: 'R' }, { side: 'M', depth: 0.8 }] },
-    { name: 'ZERO BLITZ', rush: 2, scheme: 'man3', cushion: 3, variants: [{ side: 'LR' }, { side: 'LM' }, { side: 'RM' }] },
-    { name: 'PREVENT', rush: 0, scheme: 'zone', zones: [[-6, 16], [6, 16], [-8, 6], [0, 7], [8, 6]], variants: [{ depth: 1 }, { depth: 0.85 }, { depth: 0.7 }] },
-    { name: 'QB SPY', rush: 1, scheme: 'spy', cushion: 4, variants: [{ side: 'L' }, { side: 'R' }, { side: 'M' }] },
-    { name: 'RED ZONE', rush: 1, scheme: 'man', cushion: 1.5, variants: [{ side: 'L' }, { side: 'R' }, { side: 'M' }] },
-    { name: 'MAN UNDER', rush: 1, scheme: 'manunder', cushion: 2.5, variants: [{ side: 'L' }, { side: 'R' }, { side: 'M', cushion: 1.5 }] },
+    { name: 'COVER 1', rush: 1, scheme: 'man', cushion: 4, variants: [{ side: 'L', name: 'RUSH LEFT' }, { side: 'R', name: 'RUSH RIGHT' }, { side: 'M', cushion: 3, name: 'BRACKET', bracket: true }] },
+    { name: 'COVER 2', rush: 1, scheme: 'zone', zones: [[-7, 13], [7, 13], [-5, 5], [5, 5]], variants: [{ side: 'L', name: 'RUSH LEFT' }, { side: 'R', name: 'RUSH RIGHT' }, { side: 'M', depth: 0.8, name: 'SQUAT' }] },
+    { name: 'COVER 3', rush: 1, scheme: 'zone', zones: [[-9, 12], [0, 13], [9, 12], [0, 5]], variants: [{ side: 'L', name: 'RUSH LEFT' }, { side: 'R', name: 'RUSH RIGHT' }, { side: 'M', depth: 0.8, name: 'SQUAT' }] },
+    { name: 'ZERO BLITZ', rush: 2, scheme: 'man3', cushion: 3, variants: [{ side: 'LR', name: 'EDGES' }, { side: 'LM', name: 'LEFT + MIDDLE' }, { side: 'RM', name: 'ZONE BLITZ', scheme: 'zone', zones: [[-9, 11], [0, 12], [9, 11]] }] },
+    { name: 'PREVENT', rush: 0, scheme: 'zone', zones: [[-6, 16], [6, 16], [-8, 6], [0, 7], [8, 6]], variants: [{ depth: 1, name: 'DEEP' }, { depth: 0.85, name: 'MEDIUM' }, { depth: 0.7, name: 'SHORT' }] },
+    { name: 'QB SPY', rush: 1, scheme: 'spy', cushion: 4, variants: [{ side: 'L', name: 'RUSH LEFT' }, { side: 'R', name: 'RUSH RIGHT' }, { side: 'M', name: 'RUSH MIDDLE' }] },
+    { name: 'RED ZONE', rush: 1, scheme: 'man', cushion: 1.5, variants: [{ side: 'L', name: 'RUSH LEFT' }, { side: 'R', name: 'RUSH RIGHT' }, { side: 'M', name: 'RUSH MIDDLE' }] },
+    { name: 'MAN UNDER', rush: 1, scheme: 'manunder', cushion: 2.5, variants: [{ side: 'L', name: 'RUSH LEFT' }, { side: 'R', name: 'RUSH RIGHT' }, { side: 'M', cushion: 2, name: 'ROBBER', robber: true }] },
   ];
 
   // Route / run lookups that accept library names or custom waypoint lists
@@ -4347,9 +4368,9 @@ FF.Sim = (function () {
       // routes
       const play = this.play;
       for (const p of this.off) {
+        if (play.type === 'run' && play.carrier === p.slot) { p.runPath = this.expandRunPath(play, p); p.isCarrierSlot = true; }   // the quarterback included (the keeper)
         if (p.slot === 'QB') continue;
         const rn = play.routes[p.slot];
-        if (play.type === 'run' && play.carrier === p.slot) { p.runPath = this.expandRunPath(play, p); p.isCarrierSlot = true; }
         p.route = this.expandPath(D.routeOf(rn), p.rside, p); p.routeKey = rn;
       }
       // labels A/B/C/D
@@ -4441,6 +4462,10 @@ FF.Sim = (function () {
       }
       const cushion = (v.cushion != null ? v.cushion : fr.cushion) || 3;
       const depthMul = v.depth || 1;
+      const scheme = v.scheme || fr.scheme, zoneList = v.zones || fr.zones;
+      // the center rule ("green dog"): in the looks that leave the C uncovered by design, one defender is told to pick him
+      // up if he releases past the line; until then he does his first job (rush, spy, rob)
+      const dog = d => { d.cDog = true; };
       const manOn = (list) => {
         // outside receivers to CBs, inside to LB/S
         const order = list.slice().sort((a, b) => Math.abs(b.tx - BALLX) - Math.abs(a.tx - BALLX));
@@ -4452,19 +4477,34 @@ FF.Sim = (function () {
           d.tx = rec.tx + (rec.tx > BALLX ? -0.6 : rec.tx < BALLX ? 0.6 : 0); d.ty = Math.max(this.los + 1.2, rec.ty + tech.cushion + 0.5);
         }
       };
-      if (fr.scheme === 'man') manOn(receivers);
-      else if (fr.scheme === 'man3') manOn(receivers.filter(p => p.slot !== 'C'));
-      else if (fr.scheme === 'manunder') {
-        const s = takeRole(['S', 'LB', 'CB']); s.assign = { type: 'zone', x: BALLX, y: this.los + 13, r: 9, deep: true }; s.tx = BALLX; s.ty = this.los + 12;
+      if (scheme === 'man' && v.bracket) {
+        // BRACKET: the best receiver gets two - one under him in man, one over the top shadowing him deep - the other
+        // two get a man each, the center is the one they leave (the hot read)
+        const wrs = receivers.filter(p => p.slot !== 'C');
+        const top = wrs.slice().sort((a, b) => (b.info.ratings.spd + b.info.ratings.rte + b.info.ratings.hnd) - (a.info.ratings.spd + a.info.ratings.rte + a.info.ratings.hnd))[0];
+        manOn(wrs.filter(p => p !== top));
+        { const r = this.def.find(d => d.assign && d.assign.type === 'rush'); if (r) dog(r); }   // the center is the rusher's if he releases
+        if (top) {
+          const under = takeRole(['CB', 'S', 'LB', 'R']); if (under) { under.assign = { type: 'man', target: top, cushion: 1.2, tech: 'press', base: 1.2 }; under.tx = top.tx + (top.tx > BALLX ? -0.6 : 0.6); under.ty = this.los + 1.5; }
+          const over = takeRole(['S', 'CB', 'LB', 'R']); if (over) { over.assign = { type: 'man', target: top, cushion: 6, tech: 'soft', base: 6, over: true }; over.tx = top.tx + (top.tx > BALLX ? -2 : 2); over.ty = this.los + 7; }
+        }
+      }
+      else if (scheme === 'man') manOn(receivers);
+      else if (scheme === 'man3') { manOn(receivers.filter(p => p.slot !== 'C')); const r = this.def.find(d => d.assign && d.assign.type === 'rush' && d.rushSide === 0) || this.def.find(d => d.assign && d.assign.type === 'rush'); if (r) dog(r); }
+      else if (scheme === 'manunder') {
+        const s5 = takeRole(['S', 'LB', 'CB']);
+        if (v.robber) { s5.assign = { type: 'zone', x: BALLX, y: this.los + 7, r: 7, deep: false, robber: true }; s5.tx = BALLX; s5.ty = this.los + 6; dog(s5); }   // ROBBER: underneath, reading the quarterback, takes the center
+        else { s5.assign = { type: 'zone', x: BALLX, y: this.los + 13, r: 9, deep: true }; s5.tx = BALLX; s5.ty = this.los + 12; const r = this.def.find(d => d.assign && d.assign.type === 'rush'); if (r) dog(r); }
         manOn(receivers.filter(p => p.slot !== 'C'));
       }
-      else if (fr.scheme === 'spy') {
-        const rb = receivers.find(p => p.slot === 'RB') || receivers.find(p => p.slot === 'C');
-        const s = takeRole(['LB', 'S', 'CB']); s.assign = { type: 'spy', target: rb }; s.tx = BALLX; s.ty = this.los + 4;
-        manOn(receivers.filter(p => p !== rb));
+      else if (scheme === 'spy') {
+        // the spy mirrors the quarterback; a back gets a man, the center is the spy's if he releases
+        const rb = receivers.find(p => p.slot === 'RB');
+        const s = takeRole(['LB', 'S', 'CB']); s.assign = { type: 'spy', target: null }; s.tx = BALLX; s.ty = this.los + 4; dog(s);
+        manOn(receivers.filter(p => p.slot !== 'C'));
       }
-      else if (fr.scheme === 'zone') {
-        const zones = fr.zones.slice(0, avail.length);
+      else if (scheme === 'zone') {
+        const zones = zoneList.slice(0, avail.length);
         // deep zones to S/CB, flats to LB/CB
         zones.sort((a, b) => b[1] - a[1]);
         for (const z of zones) {
@@ -4595,6 +4635,8 @@ FF.Sim = (function () {
         if (p.x !== p.tx || p.y !== p.ty) { if (this.moveToward(p, p.tx, p.ty, 1.0)) { p.wantDir = [0, 0]; p.wantSpeed = 0; p.facing = p.side === 'off' ? 2 : 6; p.pose = p.slot === 'C' ? 'snapStance' : p.slot === 'QB' ? 'stance' : p.side === 'def' ? 'dbStance' : 'idle'; } }
       }
       const sinceSet = this.t - this.setT;
+      if (this.play.jet && this.set && !this.motion && !this.jetDone && sinceSet > 0.35) { this.jetDone = true; this.startJet(); }
+      if (this.motion && this.humanSide !== 'off') this.advanceMotion(dt);
       // the quarterback points out the defense now and then
       if (this.qb.pose === 'stance' && !this.pointed && sinceSet > 0.5 && rnd.chance(0.012)) { this.qb.pose = 'point'; this.pointT = 0.7; this.pointed = true; }
       if (this.pointT > 0) { this.pointT -= dt; if (this.pointT <= 0 && this.qb.pose === 'point') this.qb.pose = 'stance'; }
@@ -4623,7 +4665,10 @@ FF.Sim = (function () {
           if ((input.pressed('A') || input.pressed('START')) && canSnap && sinceSet > 0.3) this.snap();
           else if (this.star && !canSnap && sinceSet > this.cpuSnapAt) this.snap();
         }
-      } else if (sinceSet > this.cpuSnapAt) this.snap();
+      } else if (sinceSet > this.cpuSnapAt) {
+        const jm = this.motion && this.motion.jet && this.motion.auto ? this.motion.p : null;
+        if (!jm || Math.abs(jm.x - BALLX) < 2.8 || sinceSet > this.cpuSnapAt + 3.5) this.snap();   // the jet waits for the motion man (a little grace if he never gets there)
+      }
       // --- defense pre-snap options
       if (this.humanSide === 'def' && this.phase === 'presnap') {
         if (this.audible) this.handleAudible(input);
@@ -4646,24 +4691,40 @@ FF.Sim = (function () {
         if (m && m.auto) { m.auto = false; m.set = true; a.tx = a.x; a.wantDir = [0, 0]; a.wantSpeed = 0; a.vx = 0; this.messages.push({ text: '#' + a.info.num + ' SETS', t: 0.8 }); }
         else { const dir = a.x < BALLX ? 1 : -1; this.motion = { p: a, auto: true, dir, x0: a.tx, stop: BALLX + dir * 5 }; this.messages.push({ text: 'MOTION: #' + a.info.num, t: 0.9 }); this.sfxQ('blip'); }
       }
-      const mm = this.motion;
-      if (mm && mm.auto) {
-        const sp = a.maxSpeed * 0.5; a.x += mm.dir * sp * dt; a.vx = mm.dir * sp; a.vy = 0; a.tx = a.x; a.wantDir = [mm.dir, 0]; a.wantSpeed = 0.5; a.facing = mm.dir > 0 ? 0 : 4; a.pose = 'run';
+      this.advanceMotion(dt);
+    }
+    // the motion man jogs across (an automatic motion, or the jet sweep's); the man assigned to him has to travel
+    // with him while a zone defense lets him go, so the motion tells you man or zone
+    advanceMotion(dt) {
+      const mm = this.motion; if (!mm) return;
+      const a = mm.p;
+      if (mm.auto) {
+        const sp = a.maxSpeed * (mm.jet ? 0.62 : 0.5); a.x += mm.dir * sp * dt; a.vx = mm.dir * sp; a.vy = 0; a.tx = a.x; a.wantDir = [mm.dir, 0]; a.wantSpeed = 0.5; a.facing = mm.dir > 0 ? 0 : 4; a.pose = 'run';
+        if (mm.jet) { const dy = (this.qb.ty - 0.6) - a.y, step = sp * 0.75 * dt; a.y += FF.clamp(dy, -step, step); a.ty = a.y; a.vy = FF.clamp(dy, -step, step) / dt; }   // the jet runs behind the quarterback's heels, not along the line
         if ((mm.dir > 0 && a.x >= mm.stop) || (mm.dir < 0 && a.x <= mm.stop) || a.x < 1.5 || a.x > F.FW - 1.5) { mm.auto = false; mm.set = true; a.vx = 0; a.wantDir = [0, 0]; a.wantSpeed = 0; }
       }
-      // the man assigned to him has to travel with him (a zone defense lets him go): the motion tells you man or zone
-      if (this.motion) for (const d of this.def) {
+      for (const d of this.def) {
         if (d.isHuman || !d.assign || d.assign.type !== 'man' || d.assign.target !== a) continue;
-        if (d.motionDx == null) d.motionDx = d.tx - this.motion.x0;
+        if (d.motionDx == null) d.motionDx = d.tx - mm.x0;
         d.tx = FF.clamp(a.x + (a.x > BALLX ? -0.6 : a.x < BALLX ? 0.6 : 0), 1, F.FW - 1);
       }
+    }
+    // JET SWEEP: once the line is set the named receiver goes in motion by himself, across the formation at a jog,
+    // and takes the handoff running; the offense snaps it as he crosses behind the quarterback
+    startJet() {
+      const a = this.off.find(p => p.slot === this.play.jet); if (!a || this.motion) return;
+      const dir = a.x < BALLX ? 1 : -1;
+      this.motion = { p: a, auto: true, dir, x0: a.tx, stop: BALLX + dir * 1.2, jet: true };
+      if (this.humanSide === 'off') this.messages.push({ text: 'JET: SNAP AS #' + a.info.num + ' CROSSES', t: 1.6 });
+      this.sfxQ('blip');
     }
     // at the snap a receiver who moved runs his route from where he is now (and keeps his running start)
     rebaseMotion() {
       const m = this.motion; if (!m) return;
       const p = m.p; if (Math.abs(p.x - m.x0) < 0.4) return;
-      p.tx = p.x; p.rside = p.x < BALLX ? -1 : 1;
+      p.tx = p.x; p.rside = m.jet ? -m.dir : (p.x < BALLX ? -1 : 1);
       if (p.routeKey) p.route = this.expandPath(D.routeOf(p.routeKey), p.rside, p);
+      if (p.isCarrierSlot) p.runPath = this.expandRunPath(this.play, p);
       p.motionStart = m.auto ? [p.vx, 0] : null;
     }
     handleAudible(input) {
@@ -4680,9 +4741,9 @@ FF.Sim = (function () {
           this.play = np;
           const flipS = this.flip ? -1 : 1;
           for (const p of this.off) {
-            if (p.slot === 'QB') continue;
             p.runPath = null; p.isCarrierSlot = false;
             if (np.type === 'run' && np.carrier === p.slot) { p.runPath = this.expandRunPath(np, p); p.isCarrierSlot = true; }
+            if (p.slot === 'QB') continue;
             const rn = np.routes[p.slot]; p.route = this.expandPath(D.routeOf(rn), p.rside, p); p.routeKey = rn;
           }
           this.labels = {}; ['A', 'B', 'C', 'D'].forEach((L, i) => { const p = this.off.find(q => q.slot === np.labels[i]); if (p) this.labels[L] = p; });
@@ -4755,7 +4816,7 @@ FF.Sim = (function () {
       // All-Pro CPU defenses disguise: show one coverage, rotate into another at the snap (rushers never change)
       if (this.humanSide !== 'def' && this.dlev >= 1.5 && rnd.chance(0.3 * Math.min(1.3, this.dlev - 1))) this.disguise();
       // play action: the quarterback sells the handoff and coverage defenders near the line take a step up
-      if (this.play.type === 'pass' && this.play.playAction) {
+      if (this.play.playAction && (this.play.type === 'pass' || this.play.exchange === 'keep')) {
         const rb = this.off.find(p => p.slot === 'RB') || this.off.find(p => p.slot !== 'QB' && p.slot !== 'C');
         this.qb.fakeT = 0.38; this.qb.fakeDir = rb ? F.dirFrom(rb.x - this.qb.x, rb.y - this.qb.y) : 2;
         const diffK = FF.clamp(1.0 - 0.2 * Math.min(1, this.dlev) - 0.25 * Math.max(0, this.dlev - 1), 0.4, 1);
@@ -4812,6 +4873,7 @@ FF.Sim = (function () {
         if (c) {
           if (this.play.exchange === 'pitch' && this.t > 0.3) this.pitch(c);
           else if (this.play.exchange === 'handoff' && this.t > 0.15 && FF.dist(c.x, c.y, this.qb.x, this.qb.y) < 1.5) this.handoff(c);
+          else if (this.play.exchange === 'keep' && this.t > 0.12) { this.becomeCarrier(this.qb, 'rush'); this.qb.pose = 'carry'; this.sfxQ('hand'); }   // the keeper: he sold the handoff, now he has it
         }
       }
       // --- player logic
@@ -5155,7 +5217,7 @@ FF.Sim = (function () {
     qbAI(p, dt) {
       const b = this.ball;
       if (!p.hasBall) { p.wantDir = [0, 0]; p.wantSpeed = 0; p.pose = this.handedOff || this.thrown ? 'idle' : 'stance'; return; }
-      if (this.handedOff) return;
+      if (this.handedOff) { if (this.carrier === p && this.play.exchange === 'keep') this.carrierAI(p, dt); return; }   // the designed keeper runs like a back; a scramble past the line keeps its own momentum
       if (p.fakeT > 0) { p.fakeT -= dt; p.wantDir = [0, 0]; p.wantSpeed = 0; p.pose = 'carry'; p.facing = p.fakeDir != null ? p.fakeDir : p.facing; return; }   // selling the handoff
       // on a run play, wait for the exchange
       if (this.play.type === 'run' && !this.handedOff) { p.wantDir = [0, 0]; p.wantSpeed = 0; p.pose = 'carry'; return; }
@@ -5456,7 +5518,7 @@ FF.Sim = (function () {
         const w = p.runPath[p.routeIdx];
         const n = this.nearest(this.players.filter(q => q.side !== p.side), p.x, p.y);
         let threatAhead = false;
-        if (n.p && n.d < 2.4 && w.x != null) { const dx = w.x - p.x, dy = w.y - p.y, dn = Math.hypot(dx, dy) || 1; const ex = n.p.x - p.x, ey = n.p.y - p.y; threatAhead = (dx * ex + dy * ey) / (dn * n.d) > 0.75; }
+        if (n.p && n.d < 2.4 && w.x != null && n.p.state !== 'stumble') { const dx = w.x - p.x, dy = w.y - p.y, dn = Math.hypot(dx, dy) || 1; const ex = n.p.x - p.x, ey = n.p.y - p.y; threatAhead = (dx * ex + dy * ey) / (dn * n.d) > 0.75; }
         if (w.wait == null && threatAhead) p.routeIdx = p.runPath.length; // abandon the design, improvise
         else { this.followPath(p, p.runPath, 1, dt); p.sprint = true; this.cpuEvasion(p); return; }
       }
@@ -5530,6 +5592,11 @@ FF.Sim = (function () {
       if (b.state === 'air') { this.ballAI(p); return; }
       if (b.state === 'pitch') { this.pursue(p, b.to); return; }
       if (p.biteUntil > this.t && p.biteTarget && a.type !== 'rush') { this.moveToward(p, p.biteTarget.x, p.biteTarget.y, 0.8); return; }   // bit on play action
+      // the center rule: he released past the line on a pass, so the designated man drops his first job and takes him
+      if (p.cDog && !this.handedOff && !this.thrown && this.play.type !== 'run') {
+        const c = this.center;
+        if (c && c.y > this.los + 1.8 && c.state === 'route' && c.routeKey !== 'CHECK') { p.cDog = false; p.assign = { type: 'man', target: c, cushion: 1.5, tech: 'off', base: 1.5 }; p.hist = []; p.rushGo = null; }
+      }
       if (a.type === 'rush') {
         // charge the QB, slightly leading his movement; the first steps off the line are a build-up
         // (he starts seven yards back from a standstill), and he squares up as he closes so a
@@ -5565,7 +5632,8 @@ FF.Sim = (function () {
         const redZone = this.los > F.GOAL1 - 12;
         const faster = r.maxSpeed > p.maxSpeed + 0.4;
         let cushion;
-        if (tech === 'press') cushion = Math.max(redZone ? 0.8 : 1.1, 1.3 - this.t * 0.2) + (faster ? 1.0 : 0);
+        if (a.over) cushion = Math.max(4, 6 - this.t * 0.5) + (faster ? 1.0 : 0);   // the top half of a bracket stays over him
+        else if (tech === 'press') cushion = Math.max(redZone ? 0.8 : 1.1, 1.3 - this.t * 0.2) + (faster ? 1.0 : 0);
         else if (tech === 'soft') cushion = Math.max(r.y - this.los > 9 ? 2.4 : 3.6, a.cushion - this.t * 0.9) + (faster ? 0.6 : 0);
         else cushion = Math.max(redZone ? 1.2 : 2.2, (a.cushion - this.t * 0.55) * (redZone ? 0.7 : 1) + (faster ? 0.8 : 0));
         if (this.adapt && !p.isHuman) cushion += this.adapt.deepShade * 1.2;   // DYNAMIC: he has been beaten deep before, so he gives a deeper cushion
@@ -5586,15 +5654,26 @@ FF.Sim = (function () {
         let threat = null, td = 1e9;
         for (const r of this.off) { if (r === this.qb) continue; const d = FF.dist(r.x, r.y, a.x, a.y); if (d < a.r && d < td) { td = d; threat = r; } }
         let tx = a.x, ty = a.y;
+        // the carry rule: an underneath zone runs with a receiver going vertical through it until a deep zone has him
+        // (the hole between the halves is where every seam used to live)
+        const vert = r => r.vy * this.attackDir > 2.2 && r.state === 'route';
+        const deepHas = r => this.def.some(d => d !== p && d.assign && d.assign.type === 'zone' && d.assign.deep && (FF.dist(d.x, d.y, r.x, r.y) < 5 || (Math.abs(d.assign.x - r.x) < 6 && r.y > d.assign.y - 4)));
+        let carry = p.carry || null;
+        if (carry && (!vert(carry) || FF.dist(carry.x, carry.y, a.x, a.y) > 13 || deepHas(carry))) { carry = null; p.carry = null; }
+        if (!carry && !a.deep && !a.robber && threat && vert(threat) && threat.y > a.y - 2 && !deepHas(threat)) { carry = threat; p.carry = threat; }
+        if (carry) { p.sprint = true; this.moveToward(p, carry.x + (carry.x > BALLX ? -0.6 : 0.6), carry.y + 1.8, 1); return; }
         if (threat) { tx = (a.x + threat.x) / 2; ty = Math.max(threat.y + (a.deep ? 2.5 : 1), (a.y + threat.y) / 2); }
+        else if (a.robber) { const q = this.qb; tx = FF.clamp(a.x + (q.vx || 0) * 0.4 + (q.facing === 0 ? 2 : q.facing === 4 ? -2 : 0), 3, F.FW - 3); ty = a.y; }   // the robber drifts with the quarterback's eyes
         else if (this.t > 2.5) { // QB scrambling late: sink toward deepest receiver on my side
           const deep = this.off.filter(r => r !== this.qb && Math.abs(r.x - a.x) < 9).sort((u, v) => v.y - u.y)[0];
           if (deep) { tx = (a.x + deep.x) / 2; ty = deep.y + 2; }
         }
         this.moveToward(p, tx, ty, 0.9);
       } else if (a.type === 'spy') {
-        const r = a.target || this.qb;
-        this.moveToward(p, r.x, this.los + 4, 0.85);
+        // mirror the quarterback from four yards off the line; the moment he takes off, it is a chase
+        const q = this.qb;
+        if (this.handedOff && this.carrier === q) { this.pursue(p, q); return; }
+        this.moveToward(p, FF.clamp(q.x + q.vx * 0.3, 2, F.FW - 2), this.los + 3.5, 0.9);
       }
     }
     pursue(p, c) {
@@ -6019,7 +6098,7 @@ FF.Sim = (function () {
 
 FF.Game = (function () {
   const D = FF.data, F = FF.field;
-  const DEEP = new Set(['FOUR VERTS', 'HAIL MARY', 'DOUBLE POST', 'FADE', 'HITCH-GO', 'OUT-UP', 'PA POST', 'CORNER-POST', 'STACK RELEASE', 'SMASH', 'WHEEL', 'FLOOD', 'TRIPS VERTS', 'PA DEEP', 'SLOT WHEEL', 'TRIPS WHEEL']);
+  const DEEP = new Set(['FOUR VERTS', 'HAIL MARY', 'DOUBLE POST', 'FADE', 'HITCH-GO', 'OUT-UP', 'PA POST', 'CORNER-POST', 'STACK RELEASE', 'SMASH', 'WHEEL', 'FLOOD', 'TRIPS VERTS', 'PA DEEP', 'SLOT WHEEL', 'SWITCH VERTS', 'YANKEE', 'DAGGER']);
 
   /* DYNAMIC difficulty, part two: the CPU keeps a book on you over the game and leans against your habits, within
      limits (it never shuts a habit down, it only makes it a little harder, and only after it has seen enough).
@@ -6335,7 +6414,11 @@ FF.Game = (function () {
       const fi = this.weighted(w);
       const front = D.FRONTS[fi];
       this.adaptHit = this.adaptive ? this.adaptive.frontBias(front, this) : 1;
-      return { front, variant: front.variants[rnd.i(0, 2)] };
+      // the look within the front: bracket a dominant receiver, rob the middle, zone-blitz the long downs
+      const offL = this.lineup(this.possession, 'off'); const topWR = Math.max(0, ...offL.filter(p => p.pos !== 'QB').map(p => (p.ratings.spd + p.ratings.rte + p.ratings.hnd) / 3));
+      const starWR = this.star && this.star.teamIdx === this.possession && this.star.info.pos !== 'QB';
+      const vw = front.variants.map(v => { let x = 1; if (v.bracket) x = starWR || topWR >= 82 ? 1.8 : topWR >= 74 ? 0.9 : 0.35; if (v.robber) x = 1.1; if (v.scheme === 'zone' && front.rush >= 2) x = S.need >= 8 || S.last ? 1.4 : 0.6; return x; });
+      return { front, variant: front.variants[this.weighted(vw)] };
     }
     // the CPU uses its timeouts like a coach: to save time when it is behind late, or to set up a score before the half
     cpuTimeout() {
@@ -7402,11 +7485,13 @@ FF.ui = (function () {
     for (let i = 0; i < front.rush; i++) { const sd = sides[i] || 'M'; pts.push([sd === 'L' ? -3 : sd === 'R' ? 3 : 0, 7.5, 'rush']); }
     const cushion = (v.cushion != null ? v.cushion : front.cushion) || 3;
     const recs = [[-11, 0], [-5.5, -0.5], [11, 0], [0, 0]];
-    if (front.scheme === 'zone') for (const z of front.zones.slice(0, 5 - front.rush)) { const zy = z[1] * (v.depth || 1); pts.push([z[0], zy, 'zone', { r: z[1] > 9 ? 8 : 5.5, kind: zoneKind(z[0], z[1]) }]); }
+    const scheme = v.scheme || front.scheme, zones = v.zones || front.zones;
+    if (scheme === 'zone') for (const z of zones.slice(0, 5 - front.rush)) { const zy = z[1] * (v.depth || 1); pts.push([z[0], zy, 'zone', { r: z[1] > 9 ? 8 : 5.5, kind: zoneKind(z[0], z[1]) }]); }
     else {
       const n = 5 - front.rush;
-      if (front.scheme === 'manunder') { pts.push([0, 12, 'zone', { r: 9, kind: 'deep' }]); for (let i = 0; i < Math.min(3, n - 1); i++) pts.push([recs[i][0] + (recs[i][0] > 0 ? -0.6 : 0.6), recs[i][1] + cushion, 'man', recs[i]]); }
-      else if (front.scheme === 'spy') { pts.push([0, 4, 'spy']); for (let i = 0; i < Math.min(3, n - 1); i++) pts.push([recs[i][0], recs[i][1] + cushion, 'man', recs[i]]); }
+      if (scheme === 'manunder') { if (v.robber) pts.push([0, 7, 'zone', { r: 6, kind: 'hook' }]); else pts.push([0, 12, 'zone', { r: 9, kind: 'deep' }]); for (let i = 0; i < Math.min(3, n - 1); i++) pts.push([recs[i][0] + (recs[i][0] > 0 ? -0.6 : 0.6), recs[i][1] + cushion, 'man', recs[i]]); }
+      else if (scheme === 'spy') { pts.push([0, 4, 'spy']); for (let i = 0; i < Math.min(3, n - 1); i++) pts.push([recs[i][0], recs[i][1] + cushion, 'man', recs[i]]); }
+      else if (v.bracket) { pts.push([recs[0][0] + 0.6, recs[0][1] + 1.2, 'man', recs[0]]); pts.push([recs[0][0] + 2, recs[0][1] + 7, 'man', recs[0]]); for (let i = 1; i < 3; i++) pts.push([recs[i][0] + (recs[i][0] > 0 ? -0.6 : 0.6), recs[i][1] + cushion, 'man', recs[i]]); }
       else for (let i = 0; i < n; i++) pts.push([recs[i][0] + (recs[i][0] > 0 ? -0.6 : recs[i][0] < 0 ? 0.6 : 0), recs[i][1] + cushion, 'man', recs[i]]);
     }
     // bubbles and lines first, X's on top
@@ -7588,7 +7673,7 @@ FF.ui = (function () {
       else items = D.humanPlays()[ui.formationIdx].map(p => ({ name: p.name, draw: (px, py) => drawOffDiagram(x, px, py + 8, TILE.w, TILE.h - 8, ui.formation, p, ui.flip), banner: p.type === 'run' ? '#f0e020' : '#c8962a', text: '#111', dim: p.type === 'run' && game.state === 'playcall' && ((game.los >= F.MID - 5 && game.los < F.MID) || (game.los >= F.GOAL1 - 5 && game.los < F.GOAL1)) }));
     } else {
       if (level === 0) items = D.FRONTS.map(f => ({ name: f.name, draw: (px, py) => drawDefDiagram(x, px, py + 8, TILE.w, TILE.h - 8, f, null), banner: '#3f9f3f', text: '#fff' }));
-      else items = ui.front.variants.map((v, i) => ({ name: ui.front.name + ' ' + ['1', '2', '3'][i], draw: (px, py) => drawDefDiagram(x, px, py + 8, TILE.w, TILE.h - 8, ui.front, v), banner: '#3f9f3f', text: '#fff' }));
+      else items = ui.front.variants.map((v, i) => ({ name: v.name || ui.front.name + ' ' + ['1', '2', '3'][i], draw: (px, py) => drawDefDiagram(x, px, py + 8, TILE.w, TILE.h - 8, ui.front, v), banner: '#3f9f3f', text: '#fff' }));
     }
     for (let i = 0; i < 8; i++) {
       const it = items[i]; const r = Math.floor(i / 4), c = i % 4;
@@ -9712,8 +9797,9 @@ FF.legends = (function () {
       ]],
       ['PLAYBOOK EDITOR', [
         'PLAYBOOK (MAIN MENU) OPENS ANY FORMATION. EACH ONE HOLDS',
-        'EIGHT PLAYS; A NEW PLAY ALWAYS REPLACES ONE OF THE EIGHT.',
-        'PICK A SLOT, THEN: LEFT/RIGHT SELECTS A PLAYER, UP/DOWN',
+        'EIGHT PLAYS. EDIT A SLOT, OR C (CREATE A PLAY) STARTS A',
+        'CLEAN SHEET; WHEN YOU SAVE IT YOU PICK THE PLAY IT REPLACES.',
+        'IN THE EDITOR: LEFT/RIGHT SELECTS A PLAYER, UP/DOWN',
         'CYCLES HIS ROUTE THROUGH THE LIBRARY (OR CUSTOM).',
         'SPACE DRAWS A CUSTOM ROUTE: MOVE THE CROSSHAIR, SPACE',
         'DROPS A WAYPOINT (UP TO 5), E UNDOES, ENTER FINISHES.',
@@ -9807,8 +9893,9 @@ FF.legends = (function () {
       ],
       'PLAYBOOK EDITOR': [
         'PLAYBOOK (MAIN MENU) OPENS ANY FORMATION. EACH ONE HOLDS',
-        'EIGHT PLAYS; A NEW PLAY ALWAYS REPLACES ONE OF THE EIGHT.',
-        'TAP A SLOT, THEN TAP A PLAYER ON THE FIELD (OR < PLAYER >).',
+        'EIGHT PLAYS. TAP A SLOT TO EDIT IT, OR CREATE A PLAY FOR',
+        'A CLEAN SHEET; WHEN YOU SAVE, TAP THE PLAY IT REPLACES.',
+        'TAP A PLAYER ON THE FIELD (OR < PLAYER >) TO PICK HIM.',
         '< ROUTE > CYCLES HIS ROUTE THROUGH THE LIBRARY.',
         'DRAW ROUTE: TAP THE FIELD TO DROP UP TO 5 POINTS, UNDO,',
         'FINISH. THROW KEY SETS WHICH NUMBER THROWS TO HIM.',
@@ -11455,7 +11542,7 @@ FF.legends = (function () {
   S.playEditor = {
     enter() {
       this.step = 0; this.fi = 0; this.pi = 0; this.sel = 0; this.msg = null; this.msgT = 0;
-      this.mode = 'main'; this.cur = null; FF.audio.music('menu');
+      this.mode = 'main'; this.cur = null; this.creating = false; this.createNext = false; this.pendingSave = null; FF.audio.music('menu');
     },
     // ---- load the slot's play into an editable form
     load() {
@@ -11475,6 +11562,18 @@ FF.legends = (function () {
       this.type = base.type; this.carrier = base.carrier || null; this.exchange = base.exchange || 'handoff';
       this.runPath = (base.path && base.path.custom) ? base.path.custom.map(w => [w[0] * sideOf(f, base.carrier), w[1]]) : null;
       this.name = base.name; this.dirty = false;
+    },
+    // ---- CREATE A PLAY: start from a clean sheet in the chosen formation (receivers on gos, the back in the flat,
+    // the center checking) and pick the slot it replaces when it is saved
+    loadBlank() {
+      const f = D.FORMATIONS[this.fi]; this.formation = f;
+      this.slots = Object.keys(f.slots).filter(s => s !== 'QB');
+      this.selSlot = 0; this.routes = {}; this.labels = {};
+      const reads = ['A', 'B', 'C', 'D']; let li = 0;
+      for (const s of this.slots) { this.routes[s] = { lib: s === 'C' ? 'CHECK' : s === 'RB' ? 'FLAT' : 'GO' }; if (s !== 'C' && li < 4) this.labels[s] = reads[li++]; }
+      if (li < 4) this.labels.C = reads[li];
+      this.play = null; this.type = 'pass'; this.carrier = null; this.exchange = 'handoff'; this.runPath = null;
+      this.name = 'NEW PLAY'; this.dirty = true; this.creating = true; this.pi = -1;
     },
     // ---- build the play object from the editable form and save it over the slot
     buildPlay() {
@@ -11500,15 +11599,23 @@ FF.legends = (function () {
       if (this.step === 0) {               // formation
         if (input.pressed('LEFT')) this.fi = (this.fi + 7) % 8; if (input.pressed('RIGHT')) this.fi = (this.fi + 1) % 8;
         if (input.pressed('UP')) this.fi = (this.fi + 4) % 8; if (input.pressed('DOWN')) this.fi = (this.fi + 4) % 8;
-        if (confirm(input) || input.pressed('A')) { this.step = 1; this.pi = 0; FF.audio.play('select'); }
+        if (input.pressed('C')) { this.createNext = !this.createNext; FF.audio.play('tick'); }   // CREATE A PLAY: the next formation opens on a clean sheet
+        if (confirm(input) || input.pressed('A')) { if (this.createNext) { this.createNext = false; this.loadBlank(); this.step = 2; this.mode = 'main'; } else { this.step = 1; this.pi = 0; this.creating = false; } FF.audio.play('select'); }
         if (input.pressed('BACK')) FF.go('mainmenu');
         return;
       }
-      if (this.step === 1) {               // slot
+      if (this.step === 1) {               // slot (or, saving a new play: which play it replaces)
+        if (this.pi < 0) this.pi = 0;
         if (input.pressed('LEFT')) this.pi = (this.pi + 7) % 8; if (input.pressed('RIGHT')) this.pi = (this.pi + 1) % 8;
         if (input.pressed('UP') || input.pressed('DOWN')) this.pi = (this.pi + 4) % 8;
-        if (confirm(input) || input.pressed('A')) { this.load(); this.step = 2; this.mode = 'main'; FF.audio.play('select'); }
+        if (this.pendingSave) {
+          if (confirm(input) || input.pressed('A')) { D.savePlay(this.fi, this.pi, this.pendingSave); this.pendingSave = null; this.creating = false; this.dirty = false; this.flash('SAVED TO ' + this.formation.name + ' SLOT ' + (this.pi + 1)); FF.audio.play('td'); }
+          if (input.pressed('BACK')) { this.pendingSave = null; this.step = 2; FF.audio.play('back'); }
+          return;
+        }
+        if (confirm(input) || input.pressed('A')) { this.load(); this.creating = false; this.step = 2; this.mode = 'main'; FF.audio.play('select'); }
         if (input.pressed('R')) { D.restorePlay(this.fi, this.pi); this.flash('SLOT RESTORED TO DEFAULT'); FF.audio.play('back'); }
+        if (input.pressed('C')) { this.loadBlank(); this.step = 2; this.mode = 'main'; FF.audio.play('select'); }
         if (input.pressed('BACK')) this.step = 0;
         return;
       }
@@ -11518,7 +11625,7 @@ FF.legends = (function () {
       if (this.mode === 'name') {
         for (const ch of input.text()) { const u = ch.toUpperCase(); if (/[A-Z0-9 .'-]/.test(u) && this.name.length < 14) this.name += u; }
         if (input.pressed('BACKSPACE')) this.name = this.name.slice(0, -1);
-        if (input.pressed('START') || input.pressed('BACK')) { this.mode = 'main'; this.dirty = true; }
+        if (input.pressed('START') || input.pressed('BACK')) { if (!this.name.trim() && this.nameBefore) this.name = this.nameBefore; this.mode = 'main'; this.dirty = true; }
         return;
       }
       if (this.mode === 'draw') {
@@ -11578,12 +11685,13 @@ FF.legends = (function () {
         this.cur = { ox: sx, oy: sy, x: sx, y: sy, pts: [], forRun: true }; this.mode = 'draw'; FF.audio.play('select');
       }
       if (input.pressed('NOHUDDLE') && this.type === 'run') { this.exchange = this.exchange === 'handoff' ? 'pitch' : 'handoff'; this.dirty = true; FF.audio.play('tick'); }
-      if (input.pressed('TIMEOUT')) { this.mode = 'name'; FF.audio.play('select'); }
+      if (input.pressed('TIMEOUT')) { this.mode = 'name'; this.nameBefore = this.name; if (touchOn()) this.name = ''; FF.audio.play('select'); }
       if (input.pressed('START')) {
         if (this.type === 'pass' && !Object.keys(this.labels).length) { this.flash('SET AT LEAST ONE READ (E)'); FF.audio.play('buzz'); return; }
+        if (this.creating || this.pi < 0) { this.pendingSave = this.buildPlay(); this.pi = Math.max(0, this.pi); this.step = 1; FF.audio.play('select'); return; }   // a new play: pick the play it replaces
         D.savePlay(this.fi, this.pi, this.buildPlay()); this.dirty = false; this.flash('SAVED TO ' + this.formation.name + ' SLOT ' + (this.pi + 1)); FF.audio.play('td');
       }
-      if (input.pressed('BACK')) { this.step = 1; FF.audio.play('back'); }
+      if (input.pressed('BACK')) { this.step = this.creating ? 0 : 1; this.creating = false; FF.audio.play('back'); }
     },
 
     /* ------------------------------------------------------- draw */
@@ -11600,14 +11708,15 @@ FF.legends = (function () {
           if (on && Math.floor(t * 4) % 2 === 0) FF.rectO(x, px, py, 62, 48, '#fff');
           FF.tapZone(px - 1, py - 1, 64, 50, FF.navSeq(this.fi, i, 'h', 8, false).concat(['START']), f.name);
         });
-        FF.text(x, 'EACH FORMATION HOLDS 8 PLAYS. A NEW PLAY REPLACES ONE OF THEM.', W / 2, 176, { font: FONT3x5, color: '#ddd', align: 'center' });
-        footer(x, touchOn() ? 'TAP A FORMATION   BACK: MENU' : 'ARROWS: PICK   ENTER: OPEN   ESC: BACK');
+        FF.text(x, this.createNext ? 'CREATE A PLAY: PICK THE FORMATION IT RUNS FROM' : 'EACH FORMATION HOLDS 8 PLAYS. A NEW PLAY REPLACES ONE OF THEM.', W / 2, 172, { font: FONT3x5, color: this.createNext ? '#8cf38c' : '#ddd', align: 'center' });
+        if (touchOn()) tb(x, this.createNext ? 'CREATING - TAP A FORMATION' : 'CREATE A PLAY', W / 2 - 60, 182, 120, ['C'], !this.createNext);
+        footer(x, touchOn() ? 'TAP A FORMATION TO EDIT ITS PLAYS   BACK: MENU' : 'ARROWS: PICK   ENTER: OPEN   C: CREATE A PLAY   ESC: BACK');
         return;
       }
       if (this.step === 1) {
         header(x, this.formation ? this.formation.name : D.FORMATIONS[this.fi].name);
         const f = D.FORMATIONS[this.fi]; const book = D.humanPlays()[this.fi];
-        FF.text(x, 'PICK THE SLOT TO EDIT OR REPLACE', W / 2, 32, { color: '#ffe14a', outline: '#000', align: 'center' });
+        FF.text(x, this.pendingSave ? 'WHICH PLAY DOES ' + this.pendingSave.name + ' REPLACE?' : 'PICK THE SLOT TO EDIT OR REPLACE', W / 2, 32, { color: this.pendingSave ? '#8cf38c' : '#ffe14a', outline: '#000', align: 'center' });
         book.forEach((p, i) => {
           const px = 30 + (i % 4) * 68, py = 46 + Math.floor(i / 4) * 62; const on = i === this.pi; const custom = D.isCustom(this.fi, i);
           FF.rect(x, px - 1, py - 1, 64, 52, '#000'); FF.panel(x, px, py, 62, 50, '#1e4fb8', '#4f8ff0', '#0e2a70');
@@ -11617,8 +11726,9 @@ FF.legends = (function () {
           if (on && Math.floor(t * 4) % 2 === 0) FF.rectO(x, px, py, 62, 50, '#fff');
           FF.tapZone(px - 1, py - 1, 64, 52, FF.navSeq(this.pi, i, 'h', 8, false).concat(['START']), p.name);
         });
-        if (touchOn()) { tb(x, 'RESTORE SLOT ' + (this.pi + 1), 112, 184, 96, ['R']); if (D.isCustom(this.fi, this.pi)) FF.text(x, 'SLOT ' + (this.pi + 1) + ' IS CUSTOM', W / 2, 198, { font: FONT3x5, color: '#8cf38c', align: 'center' }); }
-        footer(x, touchOn() ? 'TAP A SLOT TO EDIT IT   BACK: FORMATIONS' : 'ENTER: EDIT THIS SLOT   R: RESTORE DEFAULT   ESC: BACK');
+        if (touchOn() && !this.pendingSave) { tb(x, 'RESTORE SLOT ' + (this.pi + 1), 60, 184, 96, ['R']); tb(x, 'CREATE A PLAY', 164, 184, 96, ['C'], true); if (D.isCustom(this.fi, this.pi)) FF.text(x, 'SLOT ' + (this.pi + 1) + ' IS CUSTOM', W / 2, 198, { font: FONT3x5, color: '#8cf38c', align: 'center' }); }
+        if (touchOn() && this.pendingSave) tb(x, 'CANCEL - BACK TO THE PLAY', 112, 184, 96, ['BACK']);
+        footer(x, this.pendingSave ? (touchOn() ? 'TAP THE PLAY IT REPLACES' : 'ARROWS: PICK   ENTER: REPLACE THAT PLAY   ESC: BACK TO THE PLAY') : touchOn() ? 'TAP A SLOT TO EDIT IT   BACK: FORMATIONS' : 'ENTER: EDIT THIS SLOT   C: CREATE A PLAY   R: RESTORE DEFAULT   ESC: BACK');
         if (this.msgT > 0) FF.text(x, this.msg, W / 2, 176, { color: '#8cf38c', outline: '#000', align: 'center' });
         return;
       }
@@ -11627,7 +11737,7 @@ FF.legends = (function () {
       FF.rect(x, 0, 0, W, 26, '#111'); FF.rect(x, 0, 26, W, 2, '#ffe14a');
       FF.text(x, this.name || 'UNNAMED', 8, 6, { scale: 2, color: this.mode === 'name' ? '#8cf38c' : '#ffe14a', outline: '#000', italic: true });
       if (this.mode === 'name' && Math.floor(t * 2) % 2) FF.rect(x, 8 + FF.textWidth(this.name, { scale: 2 }) + 2, 6, 6, 14, '#8cf38c');
-      FF.text(x, f.name + '  SLOT ' + (this.pi + 1) + (this.dirty ? '  *UNSAVED*' : ''), W - 6, 10, { color: '#fff', outline: '#000', align: 'right' });
+      FF.text(x, f.name + (this.creating ? '  NEW PLAY' : '  SLOT ' + (this.pi + 1)) + (this.dirty ? '  *UNSAVED*' : ''), W - 6, 10, { color: '#fff', outline: '#000', align: 'right' });
       // mini field: top view, 5 px per yard, line of scrimmage near the bottom
       const fx = F.x, fy = F.y, fw = F.w, fh = F.h, ppy = F.ppy;
       const losY = fy + Math.round(fh * F.losFrac);
@@ -11691,7 +11801,7 @@ FF.legends = (function () {
         this.type === 'run' ? 'R ........... DRAW RUN PATH' : '',
         this.type === 'run' ? 'N ........... HANDOFF/PITCH' : '',
         'T ........... RENAME',
-        'ENTER ....... SAVE TO SLOT',
+        this.creating ? 'ENTER ....... SAVE - PICK ITS SLOT' : 'ENTER ....... SAVE TO SLOT',
         'ESC ......... BACK - NO SAVE',
       ];
       if (!touchOn()) help.filter(Boolean).forEach((h, i) => FF.text(x, h, px + 6, py + 52 + i * 9, { font: FONT3x5, color: i === 0 && this.mode !== 'main' ? '#ffe14a' : '#ddd' }));
@@ -11710,7 +11820,7 @@ FF.legends = (function () {
         tb(x, 'DRAW ROUTE', px + 6, py + 92, 64, ['A']); tb(x, 'THROW KEY', px + 76, py + 92, 64, ['B']);
         tb(x, this.type === 'run' ? 'CARRIER/PASS' : 'MAKE IT A RUN', px + 6, py + 108, 64, ['FLIP']); tb(x, 'RENAME', px + 76, py + 108, 64, ['TIMEOUT']);
         if (this.type === 'run') { tb(x, 'RUN PATH', px + 6, py + 124, 64, ['R']); tb(x, this.exchange === 'handoff' ? 'MAKE PITCH' : 'MAKE HANDOFF', px + 76, py + 124, 64, ['NOHUDDLE']); }
-        tb(x, 'SAVE TO SLOT ' + (this.pi + 1), px + 6, py + 140, 134, ['START'], true);
+        tb(x, this.creating ? 'SAVE - PICK ITS SLOT' : 'SAVE TO SLOT ' + (this.pi + 1), px + 6, py + 140, 134, ['START'], true);
       }
       if (this.msgT > 0) { FF.rect(x, px + 4, py + 150, 138, 12, '#000'); FF.text(x, this.msg, px + 73, py + 153, { font: FONT3x5, color: '#8cf38c', align: 'center' }); }
       footer(x, touchOn() ? 'WHITE: READ   GRAY: DECOY   CYAN: CARRIER   BACK: LEAVE WITHOUT SAVING' : 'WHITE: READ   GRAY: DECOY   CYAN: BALL CARRIER   DASHED: RUSH LINE');

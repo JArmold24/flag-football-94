@@ -1,4 +1,4 @@
-# Flag Football '94 — PC, phone & iOS build (v0.36)
+# Flag Football '94 — PC, phone & iOS build (v0.37)
 
 A 16-bit style 5-on-5 flag football game built from the design document, with the
 Madden '94 play-calling grid, passing windows, and camera, plus a **Superstar** career mode.
@@ -122,6 +122,36 @@ Rebuild the sheet with `cd tools/prerender && npm install && node render.js` (ne
 - Score strip with team emblems and a possession arrow; receiver windows centered; dust on cuts,
   spins and dives; the pulled flag tumbles away; screen shake on a sack; scene fades; play-call
   diagrams no longer spill out of their tiles; menus sit over a dusk stadium.
+
+## v0.37 — the playbook audit, acted on
+Measured first (every play against every front, CPU vs CPU, 20,000 plays), then fixed. The audit and the before / after
+tables are in the project doc.
+- **The run game.** Seven of fifteen runs averaged under three yards and lost ground a quarter of the time. The ones
+  that could not work with five defenders and no blocking are gone (REVERSE, REVERSE PITCH, HB COUNTER, the POWER
+  toss, BUNCH TOSS, OPTION PITCH, WR2 SWEEP); a pitch to a receiver on the sideline now bends back inside (TRIPS PITCH);
+  the counter path is a step, not a detour. Every run outside the red zone sits between 4 and 8.5 yards a carry now.
+- **New plays** (eight, in the slots the dead ones left): **HB DRAW** (the draw path existed and nothing used it),
+  **SWITCH VERTS**, **DAGGER**, **YANKEE**, **HB ANGLE** (new angle route), **WHIP-OUT** (new whip route), **JET SWEEP**
+  (the receiver goes in motion by himself once the line is set and takes the handoff at speed - the CPU snaps as he
+  crosses, you snap when you like) and **QB KEEPER** (a designed quarterback run behind a play-action fake).
+- **Dead reads.** Thirteen plays had a read the quarterback threw to under 3% of the time; those routes were replaced
+  (FLOOD's corner is a post, OPTION PASS's outside men run live routes, ROLL-OUT's back runs with the roll, and so on).
+- **The free center.** Four looks left the C uncovered by rule, and the four best plays in the book all threw to him.
+  The **center rule**: in ZERO BLITZ, MAN UNDER, QB SPY and BRACKET one defender is told to pick him up if he releases
+  (the second rusher, the rusher, the spy). QB SPY now spies the quarterback, not the center. Underneath zones **carry**
+  a receiver running vertical through them until a deep zone has him (the hole shot between the halves). CENTER SEAM
+  went from 9.8 to 5.9 yards a play, CURL-FLAT from 11.1 to 9.0; ZERO BLITZ from 8.2 allowed to 7.7, COVER 2 8.3 to 7.8.
+- **New looks** as the third variant of three fronts: **BRACKET** (COVER 1: two on the top receiver, over and under -
+  the CPU calls it on a dominant receiver or your Superstar), **ROBBER** (MAN UNDER: the free man sits at seven yards
+  reading the quarterback instead of deep) and **ZONE BLITZ** (two rushers, three deep). The variant tiles carry their
+  names now (RUSH LEFT, SQUAT, EDGES...) instead of 1 / 2 / 3.
+- **Players missing on a desktop browser (shadows only).** The sprite sheet (2048 x 13,700 px) was decoded through one
+  canvas its own size, which is past the limit on some desktop browsers and GPUs - they hand back a blank canvas
+  without an error, so every player came out transparent. It is read in 1024-row bands now, and if a browser still
+  returns a blank sheet the game falls back to the drawn sprites instead of invisible players.
+- **Create a Play.** The playbook has a CREATE A PLAY button (C on a keyboard): a clean sheet in the formation you pick
+  (receivers on gos, the back in the flat), and when you save it you pick the play it replaces - the book stays at eight
+  a formation so the call grid stays one screen. Renaming by touch starts from a blank name.
 
 ## v0.36 — a third visual pass: the sidelines and the stands come alive
 - **The bench.** The subs sit on it now (a seated clip, hands on the knees, breathing) instead of standing in a row,
