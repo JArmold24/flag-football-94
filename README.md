@@ -1,4 +1,4 @@
-# Flag Football '94 — PC, phone & iOS build (v0.37)
+# Flag Football '94 — PC, phone & iOS build (v0.38)
 
 A 16-bit style 5-on-5 flag football game built from the design document, with the
 Madden '94 play-calling grid, passing windows, and camera, plus a **Superstar** career mode.
@@ -122,6 +122,29 @@ Rebuild the sheet with `cd tools/prerender && npm install && node render.js` (ne
 - Score strip with team emblems and a possession arrow; receiver windows centered; dust on cuts,
   spins and dives; the pulled flag tumbles away; screen shake on a sack; scene fades; play-call
   diagrams no longer spill out of their tiles; menus sit over a dusk stadium.
+
+## v0.38 — the ambulance, the turnaround, and the whistle
+- **Injuries, and the ambulance.** A man whose flag comes off at speed, or anyone who goes down hard, can be hurt
+  (about one every other game at the default setting; RARE and OFF in the options). He stays down, the nearest
+  players walk over and take a knee around him, and the ambulance comes in from the far sideline - through the
+  kneeling players, who go flying - pulls up with its rear doors beside him, loads him, honks, and drives off
+  through whoever got up too early. The crowd gives him a hand on the way out. He is out for the game: a bench man
+  at his position comes in (any bench man if none is left), and the banner says who. A tap (or A / START) skips the
+  scene. Your Superstar is never hurt - it is his career and his game to play; his teammates and opponents are
+  fair game. The ambulance is original art (no cross, no star, no real service's markings), the siren and engine
+  are synthesized like every other sound in the game, and nothing is rolled in simulated, demo or practice games.
+- **The camera turnaround.** The stands, the walls, the ad boards and the scoreboard all turn with the field now.
+  The crowd was a flat tiled patch during the swing and the end wall was drawn as a screen-horizontal strip, which
+  is why the boards floated off the end zone when a play ended near it. The turned camera runs the same per-scanline
+  crowd mapper as the straight view over a copy of the whole stadium ground rotated about the camera pivot (both end
+  stands are in it, so the reverse replay angle gets real stands too), the walls are faces along their projected
+  base lines with the ad text laid along them, and the scoreboard turns on its tower. The scoreboard, the rain and
+  the snow stay up through the swing instead of popping out.
+- **Sound.** The referee's whistle a beat after every flag pull and sack (it only played on incompletions and
+  out-of-bounds before). Player voices, synthesized: the carrier grunts as his flag goes, a defender who whiffs
+  hard hits the turf with a thump and an oof, hurdles, dives and leaping catches get an effort grunt, and the
+  quarterback calls "down... set" once the line is set before the hut. The crowd winces at an injury and claps
+  the man off.
 
 ## v0.37 — the playbook audit, acted on
 Measured first (every play against every front, CPU vs CPU, 20,000 plays), then fixed. The audit and the before / after

@@ -1917,7 +1917,7 @@ Object.assign(FF, { hexToRgb, rgbToHex, shade, tint, luma, rgbToHsl, hslToRgb, s
 FF.defaultSettings = () => ({
   halfMinutes: 4, downsToCross: 4, downsToScore: 4, twoMinuteStops: true, timeouts: 1,
   difficulty: 1, dynWins: 0, haptics: true, penalties: true, intSpot: 'spot', qbRun: 'always', fractionalScale: false, scanlines: false,
-  sfx: true, music: true, autoPull: false, autoSwitch: true, runoff: 10, playStyle: 'classic', gameSpeed: 'normal', aimSens: 'medium', passView: 'field', readAids: false, cfgVer: 23,
+  sfx: true, music: true, autoPull: false, autoSwitch: true, injuries: 'on', runoff: 10, playStyle: 'classic', gameSpeed: 'normal', aimSens: 'medium', passView: 'field', readAids: false, cfgVer: 23,
 });
 FF.load = function (key, fallback) { try { const v = localStorage.getItem('ff94_' + key); return v ? JSON.parse(v) : fallback; } catch (e) { return fallback; } };
 FF.save = function (key, val) { try { localStorage.setItem('ff94_' + key, JSON.stringify(val)); return true; } catch (e) { return false; } };
@@ -2727,6 +2727,41 @@ FF.sprites = (function () {
     if (f) { fill(b, 9, 2, 2, 5, '#f0c8a0'); } else { fill(b, 9, 7, 2, 4, '#f0c8a0'); }
     outline(b, '#000');
   });
+  // The ambulance (side view, driving right; the west-facing one is this mirrored): a white box van with an
+  // orange safety stripe, a cab-over nose, a light bar that alternates red and blue and wheels that turn.
+  // Original art - no cross or star emblem, so it borrows nothing from a real service's markings.
+  const AMB_W = 56, AMB_H = 30;
+  function ambulanceSprite(light, wheel, flip) {
+    const key = 'amb' + light + wheel + (flip ? 'W' : 'E');
+    if (misc[key]) return misc[key];
+    if (flip) { const e = ambulanceSprite(light, wheel, false); const c = FF.makeCanvas(e.width, e.height); const g = c.getContext('2d'); g.translate(e.width, 0); g.scale(-1, 1); g.drawImage(e, 0, 0); misc[key] = c; return c; }
+    return miscSprite(key, AMB_W, AMB_H, b => {
+      const W = '#f4f4f8', WD = '#d8dce4', RF = '#e4e8ee', GL = '#8ec8f0', GLL = '#c8ecff', OR = '#ff7a1a', BL = '#1d3f8a', DK = '#3a3a44', TY = '#101014', HUB = '#9a9aa4';
+      // chassis and wheels (behind the body)
+      fill(b, 2, 23, 48, 1, DK);
+      for (const wx of [8, 42]) { fill(b, wx + 1, 22, 6, 8, TY); fill(b, wx, 23, 8, 6, TY); fill(b, wx + 3, 25, 2, 2, HUB); px(b, wx + 3 + (wheel ? 1 : 0), 25 + (wheel ? 0 : 1), '#d8d8e0'); px(b, wx + 4 - (wheel ? 1 : 0), 26 - (wheel ? 0 : 1), '#d8d8e0'); }
+      // roof and body
+      fill(b, 3, 4, 48, 3, RF); fill(b, 3, 4, 48, 1, '#f8fafc');
+      fill(b, 2, 7, 52, 16, W); fill(b, 2, 21, 52, 2, WD);
+      fill(b, 50, 7, 5, 16, W);                                        // the short nose
+      fill(b, 41, 8, 1, 15, WD);                                       // cab door seam
+      fill(b, 2, 8, 2, 14, WD); fill(b, 3, 8, 1, 14, '#c4c8d0');       // rear doors
+      // glass: rear door window, the box window, the cab window and the windshield
+      fill(b, 5, 9, 4, 5, GL); fill(b, 5, 9, 4, 1, GLL);
+      fill(b, 30, 9, 8, 5, GL); fill(b, 30, 9, 8, 1, GLL);
+      fill(b, 43, 8, 7, 7, GL); fill(b, 43, 8, 7, 1, GLL); px(b, 43, 9, GLL);
+      fill(b, 51, 8, 3, 7, GL); fill(b, 51, 8, 3, 1, GLL); px(b, 54, 10, GL); px(b, 54, 11, GL);
+      // the stripe, the blue pinline, lights
+      fill(b, 2, 16, 53, 3, OR); fill(b, 2, 19, 53, 1, BL);
+      fill(b, 54, 20, 2, 2, '#ffe060'); px(b, 55, 19, '#ffe060'); fill(b, 2, 20, 1, 2, '#e03030');
+      fill(b, 51, 22, 5, 2, DK);                                        // bumper
+      // the light bar: one side lit at a time
+      fill(b, 19, 3, 18, 1, DK); fill(b, 20, 1, 8, 2, light ? '#ff3030' : '#7a1818'); fill(b, 28, 1, 8, 2, light ? '#1838a0' : '#58a0ff');
+      if (light) { px(b, 21, 0, '#ffb0b0'); px(b, 22, 0, '#ffb0b0'); } else { px(b, 33, 0, '#b0d8ff'); px(b, 34, 0, '#b0d8ff'); }
+      outline(b, '#000');
+    });
+  }
+  const ambulance = (light, wheel, flip) => ambulanceSprite(light ? 1 : 0, wheel ? 1 : 0, !!flip);
   const footballIcon = () => miscSprite('fbicon', 14, 8, b => {
     const B = '#b05a1e', D = '#6a3410', L = '#fff';
     fill(b, 3, 1, 8, 6, B); fill(b, 1, 2, 12, 4, B); fill(b, 5, 3, 4, 1, L); px(b, 6, 2, L); px(b, 8, 2, L); px(b, 6, 4, L); px(b, 8, 4, L); px(b, 1, 3, D); px(b, 12, 4, D);
@@ -2791,7 +2826,7 @@ FF.sprites = (function () {
     const ax = sp.ax != null ? sp.ax : sp.lw / 2, ay = sp.ay != null ? sp.ay : sp.lh - 1;
     x.drawImage(sp, Math.round(cx - ax * k), Math.round(by - ay * k), Math.round(sp.lw * k), Math.round(sp.lh * k));
   }
-  return { build, buildFor, heightScale, runFrames, onSheet, clipFrames, hasClip, catchClip, reachClip, ref, cameraman, coach, drawAt, palette, ball, ballBig, ballAngle, cursor, pylon, whistle, referee, footballIcon, capEmblem, logo, prewarm, pump, SW, SH, SKINS, SKIN_SHADE, HAIRS, STYLE_FIELDS, styleOf, styleKey, randomStyle, GOLD };
+  return { build, buildFor, heightScale, runFrames, onSheet, clipFrames, hasClip, catchClip, reachClip, ref, cameraman, coach, drawAt, palette, ball, ballBig, ballAngle, cursor, pylon, whistle, referee, ambulance, AMB_W, AMB_H, footballIcon, capEmblem, logo, prewarm, pump, SW, SH, SKINS, SKIN_SHADE, HAIRS, STYLE_FIELDS, styleOf, styleKey, randomStyle, GOLD };
 })();
 
 </script>
@@ -3665,10 +3700,12 @@ FF.field = (function () {
   function drawActors(x, sim, cam, vp, t) {
     x.save(); x.beginPath(); x.rect(vp.x, vp.y, vp.w, vp.h); x.clip();
     const items = [];
-    for (const p of sim.players) items.push({ y: p.y, p });
+    for (const p of sim.players) if (!p.hidden) items.push({ y: p.y, p });
+    for (const e of sim.extras || []) items.push({ y: e.y, e });   // non-player actors (the ambulance) take their place in the painter's order
     const ball = sim.ball;
     // shadows first
     for (const it of items) {
+      if (it.e) { if (it.e.shadow) { const pr = proj(it.e.x, it.e.y, cam, vp); drawShadow(x, pr, cam, vp, it.e.shadow); } continue; }
       const p = it.p; const pr = proj(p.x, p.y, cam, vp);
       const jk = p.state === 'juke' && p.jukeDir ? [p.jukeDir[0], Math.max(0, 1 - p.stateT / 0.3)] : null;
       drawShadow(x, pr, cam, vp, 7, jk);
@@ -3689,7 +3726,7 @@ FF.field = (function () {
     }
     // dust kicked up by cuts, spins and dives
     for (const it of items) {
-      const p = it.p; let k = 0;
+      const p = it.p; let k = 0; if (!p) continue;
       if (p.state === 'juke' && p.stateT < 0.3) k = 1 - p.stateT / 0.3;
       else if (p.state === 'spin' && p.stateT < 0.3) k = 0.7 * (1 - p.stateT / 0.3);
       else if (p.state === 'dive' && p.stateT > 0.38 && p.stateT < 0.65) k = 1 - (p.stateT - 0.38) / 0.27;
@@ -3741,9 +3778,10 @@ FF.field = (function () {
       sim.routeGuide.forEach((pt, i) => { const q = proj(pt[0], pt[1], cam, vp); if (i === 0) x.moveTo(q.x, q.y); else x.lineTo(q.x, q.y); });
       x.stroke();
     }
-    for (const it of items) it.sy = proj(it.p.x, it.p.y, cam, vp).y;   // painter's order by screen row (right for every camera)
+    for (const it of items) { const o = it.p || it.e; it.sy = proj(o.x, o.y, cam, vp).y; }   // painter's order by screen row (right for every camera)
     items.sort((a, b) => a.sy - b.sy);
     for (const it of items) {
+      if (it.e) { const pr = proj(it.e.x, it.e.y, cam, vp); it.e.draw(x, pr, spriteScale(pr.s), cam, t); continue; }
       const p = it.p;
       if (p.state === 'juke' && p.stateT < 0.22 && p.jukeDir) {   // two afterimages on the cut; the offset never shrinks below 3 px so it reads far up the field
         const pr0 = proj(p.x, p.y, cam, vp); const yd = Math.max(0.9, 3 / Math.max(0.1, 9.5 * pr0.s));
@@ -3828,6 +3866,7 @@ FF.field = (function () {
       else if (pose === 'celebrate2') frame = Math.floor(t * 4) % 2;
       else if (pose === 'pull') { const n = FF.sprites.clipFrames('pull'); const hit = p.pullAnim && p.pullAnim.hit; frame = hit ? Math.min(n - 1, Math.floor(a / (0.4 / n))) : Math.min(Math.round(n * 0.3), Math.floor(a / 0.07)); if (frame >= Math.round(n * 0.45)) o.heldColor = p.showFlagColor || (p.pullAnim && p.pullAnim.c.flagColor); }
       else if (pose === 'hold') { frame = Math.floor(t * 3) % 2; o.heldColor = p.showFlagColor; }
+      else if (p.hurt) frame = Math.floor(t * 1.6) % 2 ? 1 : 2;   // down and hurt: rolling between flat on his back and knees up
       else if (pose === 'stumble' || pose === 'fall') frame = Math.min(2, Math.floor(p.stateT / Math.max(0.3, p.stumbleDur || 0.42) * 3));
       else if (pose === 'getup') frame = Math.min(2, Math.floor(a / 0.11));
       else if (pose === 'catch') { const n = FF.sprites.clipFrames(FF.sprites.catchClip(o.catchKind, o.catchRun)); frame = Math.min(n - 1, Math.floor(a / (p.catchDur || 0.3) * n)); }
@@ -4095,14 +4134,7 @@ FF.stadium = (function () {
     const texW = SIDE_W * TPY, tileH = TILE_Y * TPY;
     x.fillStyle = M.stand; x.fillRect(vp.x, vp.y, vp.w, vp.h);
     if (cam.rot && Math.abs(Math.abs(cam.rot) - Math.PI / 2) < 0.02) { drawStandsSide(x, cam, vp, fr); return; }   // sideline cameras: true perspective rows
-    if (cam.rot) {   // during the camera swing the rows are not depth-aligned: tile a patch of the crowd instead
-      const pk = 'swing' + texKey; if (!tex[pk]) { const c = FF.makeCanvas(48, 48); c.getContext('2d').drawImage(L, 8, 0, 48, 48, 0, 0, 48, 48); tex[pk] = x.createPattern(c, 'repeat'); }
-      x.fillStyle = tex[pk]; x.fillRect(vp.x, vp.y, vp.w, vp.h);
-      // the upper rows fall away into haze so the flat patch still reads as a bowl
-      const gr = x.createLinearGradient(0, vp.y, 0, vp.y + vp.h * 0.5); gr.addColorStop(0, 'rgba(10,14,30,0.55)'); gr.addColorStop(1, 'rgba(10,14,30,0)');
-      x.fillStyle = gr; x.fillRect(vp.x, vp.y, vp.w, vp.h * 0.5);
-      return;
-    }
+    if (cam.rot) { drawStandsRot(x, cam, vp, fr); return; }   // the camera swing and the reverse replay angle: the same mapper over a rotated crowd
     const cx = cam.cx != null ? cam.cx : vp.cx;
     const fw = F.FW, FL = F.FL;
     const endX0 = -(WALL_X + SIDE_W), endW = fw + 2 * (WALL_X + SIDE_W);
@@ -4172,22 +4204,109 @@ FF.stadium = (function () {
     }
   }
 
+  // Turned camera (the between-play swing, the reverse replay angle): the crowd is a flat ground texture around
+  // the field, so a turned camera is the straight mapper run over that texture rotated about the camera pivot.
+  // The whole stadium ground is painted once per crowd frame (side stands tiled along the field, end stands at
+  // both ends), rotated into a square scratch canvas each frame, and then every screen row samples one row of it
+  // at that row's depth - the stands keep their perspective and stay attached to the field as it turns.
+  let gmap = null, rmap = null;
+  const GX0 = -(WALL_X + SIDE_W), GY0 = -(END_Y + SIDE_W);          // world rect of the ground map starts here
+  function groundMap(fr) {
+    const fw = FW(), FL = FF.field.FL;
+    if (!gmap || gmap.key !== texKey) gmap = { key: texKey, full: [], half: [], w: Math.ceil((fw + 2 * (WALL_X + SIDE_W)) * TPY), h: Math.ceil((FL + 2 * (END_Y + SIDE_W)) * TPY) };
+    if (gmap.full[fr]) return gmap;
+    const L = tex.left[fr], R = tex.right[fr], E = tex.end[fr];
+    const c = FF.makeCanvas(gmap.w, gmap.h); const g = c.getContext('2d');
+    g.fillStyle = M.stand; g.fillRect(0, 0, gmap.w, gmap.h);
+    const yFar = Math.round((FL + END_Y - GY0) * TPY), yNear = Math.round((-END_Y - GY0) * TPY);
+    g.drawImage(E, 0, yFar);                                                                   // far end stands, tier 0 at the apron
+    g.save(); g.translate(0, yNear); g.scale(1, -1); g.drawImage(E, 0, 0); g.restore();       // near end stands: the same bowl mirrored
+    g.save(); g.beginPath(); g.rect(0, yNear, gmap.w, yFar - yNear); g.clip();                 // side stands tiled along the field (tiles aligned at y = 0 like the straight view)
+    for (let ty = Math.floor(-END_Y / TILE_Y) * TILE_Y; ty < FL + END_Y; ty += TILE_Y) { const v = Math.round((ty - GY0) * TPY); g.drawImage(L, 0, v); g.drawImage(R, Math.round((fw + WALL_X - GX0) * TPY), v); }
+    g.restore();
+    gmap.full[fr] = c;
+    const hc = FF.makeCanvas(gmap.w >> 1, gmap.h >> 1); const hg = hc.getContext('2d'); hg.imageSmoothingEnabled = true; hg.drawImage(c, 0, 0, hc.width, hc.height); gmap.half[fr] = hc;
+    return gmap;
+  }
+  function drawStandsRot(x, cam, vp, fr) {
+    const F = FF.field;
+    const gm = groundMap(fr);
+    const S = Math.ceil(Math.hypot(gm.w, gm.h)) + 2;
+    if (!rmap || rmap.S !== S) rmap = { S, full: FF.makeCanvas(S, S), half: FF.makeCanvas(S >> 1, S >> 1) };
+    const c = Math.cos(cam.rot), s = Math.sin(cam.rot);
+    // the scratch canvas is centered on the rotated image of the map's center, so the whole map always fits
+    const mcx = GX0 + gm.w / TPY / 2, mcy = GY0 + gm.h / TPY / 2;
+    const rcx = cam.px + (mcx - cam.px) * c - (mcy - cam.py) * s, rcy = cam.py + (mcx - cam.px) * s + (mcy - cam.py) * c;
+    const RX0 = rcx - S / TPY / 2, RY0 = rcy - S / TPY / 2;                   // rotated-world coords of the scratch canvas origin
+    const e = (cam.px - RX0) * TPY + (GX0 - cam.px) * TPY * c - (GY0 - cam.py) * TPY * s;
+    const f = (cam.py - RY0) * TPY + (GX0 - cam.px) * TPY * s + (GY0 - cam.py) * TPY * c;
+    for (const [cv, src, q] of [[rmap.full, gm.full[fr], 1], [rmap.half, gm.half[fr], 2]]) {
+      const g = cv.getContext('2d'); g.setTransform(1, 0, 0, 1, 0, 0); g.imageSmoothingEnabled = q === 2;
+      g.fillStyle = M.stand; g.fillRect(0, 0, cv.width, cv.height);
+      g.setTransform(c, s, -s, c, e / q, f / q); g.drawImage(src, 0, 0);
+    }
+    const cx = cam.cx != null ? cam.cx : vp.cx;
+    for (let sy = vp.y + vp.h - 1; sy >= vp.y; sy--) {
+      const syb = vp.y + vp.h - sy;
+      const d = F.DK * syb / (F.YK - syb);
+      const wy = cam.base + d; const kx = F.XK / (d + F.DK);
+      const row = Math.floor((wy - RY0) * TPY); if (row < 0 || row >= S) continue;
+      const dyPerYd = F.YK * F.DK / ((d + F.DK) * (d + F.DK));
+      const lo = dyPerYd < 2.6, q = lo ? 2 : 1;
+      const sx0 = vp.x + vp.w / 2 - cx * kx;
+      x.drawImage(lo ? rmap.half : rmap.full, 0, (row / q) | 0, (S / q) | 0, 1, sx0 + RX0 * kx, sy, (S / TPY) * kx, 1);
+    }
+  }
+
   // ------------------------------------------------------------ walls (vertical faces with ad boards)
-  const ADS = [['FLAG \'94', '#1d3f8a', '#ffd21f'], ['GRIDIRON COLA', '#a01818', '#ffffff'], ['PIXEL AIR', '#f0f0f0', '#1a1a1a'], ['5-ON-5', '#1a6a2a', '#ffffff'], ['SPRINT SHOES', '#202020', '#ff8a1a'], ['TURF KING', '#2a7a3a', '#f4e04a']];
-  function wallFace(x, F, wx, ya, yb, cam, vp, hYd, colFace, colCap) {
-    const a = F.proj(wx, ya, cam, vp), b = F.proj(wx, yb, cam, vp);
+  const ADS =[['FLAG \'94', '#1d3f8a', '#ffd21f'], ['GRIDIRON COLA', '#a01818', '#ffffff'], ['PIXEL AIR', '#f0f0f0', '#1a1a1a'], ['5-ON-5', '#1a6a2a', '#ffffff'], ['SPRINT SHOES', '#202020', '#ff8a1a'], ['TURF KING', '#2a7a3a', '#f4e04a']];
+  // a vertical face standing on the ground segment (x0,y0)-(x1,y1), hYd tall; null when it is off screen
+  function wallSeg(x, F, x0, y0, x1, y1, cam, vp, hYd, colFace, colCap) {
+    const a = F.proj(x0, y0, cam, vp), b = F.proj(x1, y1, cam, vp);
     if ((a.y < vp.y && b.y < vp.y) || (a.y > vp.y + vp.h + 20 && b.y > vp.y + vp.h + 20)) return null;
+    if (Math.max(a.x, b.x) < vp.x - 2 || Math.min(a.x, b.x) > vp.x + vp.w + 2) return null;
     const ha = hYd * a.k * 0.9, hb = hYd * b.k * 0.9;
     x.fillStyle = colFace; x.beginPath(); x.moveTo(a.x, a.y); x.lineTo(b.x, b.y); x.lineTo(b.x, b.y - hb); x.lineTo(a.x, a.y - ha); x.closePath(); x.fill();
-    x.fillStyle = weather === 'snow' ? '#e8ecf4' : colCap; x.beginPath(); x.moveTo(a.x, a.y - ha); x.lineTo(b.x, b.y - hb); x.lineTo(b.x, b.y - hb - 1); x.lineTo(a.x, a.y - ha - 1); x.closePath(); x.fill();
+    if (colCap) { x.fillStyle = weather === 'snow' ? '#e8ecf4' : colCap; x.beginPath(); x.moveTo(a.x, a.y - ha); x.lineTo(b.x, b.y - hb); x.lineTo(b.x, b.y - hb - 1); x.lineTo(a.x, a.y - ha - 1); x.closePath(); x.fill(); }
     return { a, b, ha, hb };
+  }
+  // screen direction of a face, folded so text laid along it reads left to right
+  function faceAngle(seg) { let ang = Math.atan2(seg.b.y - seg.a.y, seg.b.x - seg.a.x); if (ang > Math.PI / 2) ang -= Math.PI; else if (ang < -Math.PI / 2) ang += Math.PI; return ang; }
+  // an ad painted along a face: upright beside a wall that runs up the screen (the straight view's sidelines),
+  // laid along the face once the camera has turned it toward the viewer
+  function faceLabel(x, seg, str, color, side, cam) {
+    const ang = faceAngle(seg), mx = (seg.a.x + seg.b.x) / 2, my = (seg.a.y + seg.b.y) / 2, h = (seg.ha + seg.hb) / 2;
+    if (side && (!cam.rot || Math.abs(ang) > 0.9)) { FF.text(x, str, Math.round(mx) + side * 2, Math.round(my - h * 0.75), { font: FONT3x5, color, align: side < 0 ? 'right' : 'left' }); return; }
+    if (!cam.rot || Math.abs(ang) < 0.02) { FF.text(x, str, Math.round(mx), Math.round(my - h / 2) - 2, { font: FONT3x5, color, align: 'center' }); return; }   // pixel-exact while the face is level
+    if (Math.hypot(seg.b.x - seg.a.x, seg.b.y - seg.a.y) < str.length * 4 + 2) return;
+    x.save(); x.translate(Math.round(mx), Math.round(my - h / 2)); x.rotate(ang);
+    FF.text(x, str, 0, -2, { font: FONT3x5, color, align: 'center' }); x.restore();
   }
   // a scoreboard on top of the far end stands: live score, half and clock (marks.board from the game)
   function drawBoard(x, cam, vp, board) {
     const F = FF.field, fw = F.FW, FL = F.FL;
     const by = FL + END_Y + 9;                         // world y of the board's base
-    if (!(by > cam.base - 1 && by < cam.base + 50)) return;
     const a = F.proj(fw / 2 - 8, by, cam, vp), b = F.proj(fw / 2 + 8, by, cam, vp);
+    const d = F.DK / a.s - F.DK; if (!(d > -1 && d < 50)) return;
+    if (cam.rot) {   // turned camera: the panel is a parallelogram along its projected base, the text laid along it
+      const seg = { a, b, ha: 0, hb: 0 }; const w = Math.hypot(b.x - a.x, b.y - a.y), ang = faceAngle(seg);
+      if (w < 24 || Math.abs(ang) > 1.2) return;
+      const k = (a.k + b.k) / 2, h = Math.max(6, 3.6 * k * 0.9), tower = 3 * k * 0.9;
+      const baseA = a.y - tower, baseB = b.y - tower, mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      FF.rect(x, Math.round(mx) - 1, Math.round(my - tower), 3, Math.round(tower) + 2, '#3a3a44');
+      const quad = (dy0, dy1, col, inset) => { const ux = (b.x - a.x) / w * inset, uy = (b.y - a.y) / w * inset; x.fillStyle = col; x.beginPath(); x.moveTo(a.x + ux, baseA + uy - dy0); x.lineTo(b.x - ux, baseB - uy - dy0); x.lineTo(b.x - ux, baseB - uy - dy1); x.lineTo(a.x + ux, baseA + uy - dy1); x.closePath(); x.fill(); };
+      quad(-1, h + 1, '#101014', -1); quad(0, h, '#1c1c24', 0); quad(h - 1, h, '#3a3a48', 1);
+      if (h >= 7) {
+        x.save(); x.translate(Math.round(mx), Math.round((baseA + baseB) / 2 - h)); x.rotate(ang);
+        if (h >= 11 && w >= 56) {
+          FF.text(x, board.t0 + ' ' + board.s0, Math.round(-w / 2) + 3, 2, { font: FONT3x5, color: '#ffd21f' });
+          FF.text(x, board.t1 + ' ' + board.s1, Math.round(w / 2) - 3, 2, { font: FONT3x5, color: '#ffd21f', align: 'right' });
+          FF.text(x, board.clock, 0, 9, { font: FONT3x5, color: '#ff6a3a', align: 'center' });
+        } else FF.text(x, board.s0 + ' - ' + board.s1, 0, 2, { font: FONT3x5, color: '#ffd21f', align: 'center' });
+        x.restore();
+      }
+      return;
+    }
     const w = b.x - a.x, h = Math.max(6, 3.6 * a.k * 0.9), base = a.y - 3 * a.k * 0.9;   // on a short tower
     if (w < 24) return;
     FF.rect(x, Math.round(a.x + w / 2) - 1, Math.round(base), 3, Math.round(a.y - base) + 2, '#3a3a44');
@@ -4211,25 +4330,33 @@ FF.stadium = (function () {
       // ad boards in 8-yard panels along the face
       for (let ya = Math.floor(y0 / 8) * 8; ya < y1; ya += 8) {
         const i = ((ya / 8) | 0) & 0x7fff; const ad = ADS[(i + (wx < 0 ? 0 : 3)) % ADS.length];
-        const seg = wallFace(x, F, wx, Math.max(ya, y0), Math.min(ya + 8, y1), cam, vp, 1.3, i % 3 === 1 ? M.wall : ad[1], M.wallCap);
+        const seg = wallSeg(x, F, wx, Math.max(ya, y0), wx, Math.min(ya + 8, y1), cam, vp, 1.3, i % 3 === 1 ? M.wall : ad[1], M.wallCap);
         if (!seg) continue;
         if (i % 3 !== 1 && seg.ha > 7) {   // readable only up close
-          const mid = F.proj(wx, (Math.max(ya, y0) + Math.min(ya + 8, y1)) / 2, cam, vp);
-          FF.text(x, ad[0], mid.x + (wx < 0 ? -2 : 2), mid.y - Math.round(seg.ha * 0.75), { font: FONT3x5, color: ad[2], align: wx < 0 ? 'right' : 'left' });
+          if (cam.rot) faceLabel(x, seg, ad[0], ad[2], wx < 0 ? -1 : 1, cam);
+          else { const mid = F.proj(wx, (Math.max(ya, y0) + Math.min(ya + 8, y1)) / 2, cam, vp); FF.text(x, ad[0], mid.x + (wx < 0 ? -2 : 2), mid.y - Math.round(seg.ha * 0.75), { font: FONT3x5, color: ad[2], align: wx < 0 ? 'right' : 'left' }); }
         }
       }
     }
-    // end wall behind the far end zone (a straight face across the width)
-    const ey = FL + END_Y;
-    if (cam.rot || (ey > cam.base - 1 && ey < cam.base + 52)) {
-      const a = F.proj(-WALL_X, ey, cam, vp), b = F.proj(fw + WALL_X, ey, cam, vp); const h = Math.max(2, 1.3 * a.k * 0.9);
-      x.fillStyle = M.wall; x.fillRect(a.x, a.y - h, b.x - a.x, h); x.fillStyle = M.wallCap; x.fillRect(a.x, a.y - h - 1, b.x - a.x, 1);
-      if (board && !cam.rot) drawBoard(x, cam, vp, board);
-      const nAds = Math.max(1, Math.floor((b.x - a.x) / 60));
+    // end walls: a straight face across the width behind each end zone. The straight view shows the far one;
+    // a turned camera shows whichever end is in front of it, as one face so it turns with the field
+    for (const ey of [FL + END_Y, -END_Y]) {
+      if (!cam.rot) { if (ey < 0 || !(ey > cam.base - 1 && ey < cam.base + 52)) continue; }
+      else { const m = F.proj(fw / 2, ey, cam, vp); if (F.DK / m.s - F.DK < 6) continue; }
+      const X0 = -WALL_X, X1 = fw + WALL_X;
+      const face = wallSeg(x, F, X0, ey, X1, ey, cam, vp, 1.3, M.wall, M.wallCap);
+      if (!face) continue;
+      if (board && ey > 0) drawBoard(x, cam, vp, board);
+      const len = Math.hypot(face.b.x - face.a.x, face.b.y - face.a.y), nAds = Math.max(1, Math.floor(len / 60));
+      const h = (face.ha + face.hb) / 2; if (h < 3) continue;
+      // panels of equal screen length: a screen fraction t along the face maps to the world fraction u through the
+      // depths at the two ends (perspective-correct), so the far panels are not squeezed into unreadable slivers
+      const ka = face.a.k, kb = face.b.k, U = t => t * kb / ((1 - t) * ka + t * kb);
       for (let i = 0; i < nAds; i++) {
-        const ad = ADS[(i + 1) % ADS.length]; const px = a.x + i * (b.x - a.x) / nAds, pw = (b.x - a.x) / nAds;
-        x.fillStyle = ad[1]; x.fillRect(Math.round(px + 2), Math.round(a.y - h + 1), Math.round(pw - 4), Math.max(1, Math.round(h - 2)));
-        if (h >= 8) FF.text(x, ad[0], Math.round(px + pw / 2), Math.round(a.y - h / 2 - 2), { font: FONT3x5, color: ad[2], align: 'center' });
+        const ad = ADS[(i + 1) % ADS.length];
+        const u0 = U((i + 0.04) / nAds), u1 = U((i + 0.96) / nAds);
+        const seg = wallSeg(x, F, X0 + (X1 - X0) * u0, ey, X0 + (X1 - X0) * u1, ey, cam, vp, 1.3 * (h - 2) / h, ad[1], null);
+        if (seg && h >= 8) faceLabel(x, { a: seg.a, b: seg.b, ha: face.ha, hb: face.hb }, ad[0], ad[2], 0, cam);
       }
     }
     x.restore();
@@ -4624,7 +4751,7 @@ FF.Sim = (function () {
               if (FF.dist(p.x, p.y, p.tx, p.ty) > 0.14 && this.huddleT < 3.2) { all = false; this.moveToward(p, p.tx, p.ty, 0.72); }
               else settle(p);
             }
-            if (all) { this.set = true; this.setT = this.t; }
+            if (all) { this.set = true; this.setT = this.t; this.sfxQ('cadence'); }
           }
           if (!this.set) return;
         }
@@ -5051,7 +5178,7 @@ FF.Sim = (function () {
     // a runner going by a defender who is down on the turf hops over him
     hurdleCheck(p) {
       if (p.hurdleT > 0 || p.hurdleCd > this.t || Math.hypot(p.vx, p.vy) < 3) return;
-      for (const d of this.players) if (d !== p && d.pose === 'fall' && d.state === 'stumble' && d.stateT > 0.15 && FF.dist(p.x, p.y, d.x, d.y) < 1.4) { p.hurdleT = 0.3; p.hurdleCd = this.t + 1.0; this.sfxQ('hurdle'); return; }
+      for (const d of this.players) if (d !== p && d.pose === 'fall' && d.state === 'stumble' && d.stateT > 0.15 && FF.dist(p.x, p.y, d.x, d.y) < 1.4) { p.hurdleT = 0.3; p.hurdleCd = this.t + 1.0; this.sfxQ('hurdle'); this.sfxQ('grunt'); return; }
     }
     carrierControl(p, input) {
       this.hurdleCheck(p);
@@ -5128,7 +5255,7 @@ FF.Sim = (function () {
       p.pose = 'catch'; p.animT = 0; p.cyc = 0; p.reach = null; p.reachKind = null;
     }
     dive(p) {
-      const b = this.ball; this.setState(p, 'dive'); p.pose = 'dive'; p.diveDir = norm(b.lx - p.x, b.ly - p.y); p.diveT = 0.7; p.facing = F.dirFrom(p.diveDir[0], p.diveDir[1]) || p.facing;
+      const b = this.ball; this.setState(p, 'dive'); p.pose = 'dive'; this.sfxQ('grunt'); p.diveDir = norm(b.lx - p.x, b.ly - p.y); p.diveT = 0.7; p.facing = F.dirFrom(p.diveDir[0], p.diveDir[1]) || p.facing;
     }
 
     /* ------------------------------------------------- offense AI */
@@ -5847,7 +5974,7 @@ FF.Sim = (function () {
       this.beginCatch(rec, wasDiving ? 'dive' : (rec.reachKind || this.catchKindFor(rec))); rec.catchKindHint = null;
       // gather the ball before turning upfield: a catch on the run keeps more of his speed than one he had to turn for
       const keep = rec.catchRun ? 0.5 : 0.3; rec.vx *= keep; rec.vy *= keep; rec.catchHold = rec.catchRun ? 0.14 : 0.18;
-      this.sfxQ('catch'); this.catchT = this.t;
+      this.sfxQ('catch'); this.catchT = this.t; if (rec.catchKind === 'jump' || rec.catchKind === 'high' || wasDiving) this.sfxQ('grunt');
       this.carrier = rec; this.setState(rec, 'carry'); rec.pose = 'catch';
       if (this.humanSide === 'off' && !this.star) this.controlled = rec;
       this.autoSwitchTo(rec.x, rec.y);
@@ -5925,14 +6052,14 @@ FF.Sim = (function () {
       const whiff = !hit && cspd > 3 && (dot < 0.4 || cspd > dspd + 1.2);   // chasing from behind at pace keeps you in range
       this.setState(d, 'pulling', true); d.pose = 'pull'; d.animT = 0; d.pullAnim = { c, hit, whiff, t: 0, done: false };
       d.pullCd = 0.5; d.wantSpeed = 0; d.vx *= 0.3; d.vy *= 0.3;
-      if (hit) { c.pulledBy = d; c.animT = 0; c.vx *= 0.35; c.vy *= 0.35; c.wantSpeed = 0; }
+      if (hit) { c.pulledBy = d; c.pulledSpeed = cspd; c.animT = 0; c.vx *= 0.35; c.vy *= 0.35; c.wantSpeed = 0; }
     }
     resolvePull(d) {
       const A = d.pullAnim; A.done = true; const c = A.c, pul = d.info.ratings.pul / 99;
       if (A.hit) {
         d.pullCd = 0.7;
         this.stat(d, 'pulls'); d.animT = 0.19; d.showFlag = 1; d.showFlagColor = c.flagColor; d.whistle = 1.2; d.wantSpeed = 0; d.vx = d.vy = 0;
-        this.sfxQ('rip');
+        this.sfxQ('rip'); this.sfxQ('ugh');
         const spot = FF.clamp(c.y, 0, F.FL);
         if (c === this.qb && !this.handedOff && !this.thrown) { this.stat(d, 'sacks'); if (spot < F.GOAL0) this.end({ type: 'safety', spot, puller: d }); else this.end({ type: 'sack', spot, puller: d }); return; }
         if (this.attackDir > 0 && spot < F.GOAL0) { this.end({ type: 'safety', spot, puller: d }); return; }
@@ -5948,6 +6075,7 @@ FF.Sim = (function () {
         if (whiff) {
           const hard = Math.hypot(c.vx, c.vy) > 4.8 && rnd.chance(0.55);
           d.stumbleDur = (hard ? 0.62 : 0.40) + (1 - pul) * 0.25; d.pose = hard ? 'fall' : 'stumble'; d.vx *= 0.2; d.vy *= 0.2; d.pullCd = d.stumbleDur + 0.35;
+          if (hard) { this.sfxQ('thump'); this.sfxQ('oof'); }
         }
         else { d.stumbleDur = 0.16 + (1 - pul) * 0.14; d.vx *= 0.65; d.vy *= 0.65; d.pullCd = d.stumbleDur + 0.1; }
         this.sfxQ('miss');
@@ -5986,9 +6114,23 @@ FF.Sim = (function () {
     }
     updateDead(dt, input) {
       this.deadT += dt;
-      for (const p of this.players) { p.stateT += dt; p.showFlag -= dt; p.whistle -= dt; if (p.state === 'stumble' && p.stateT > Math.max(0.5, p.stumbleDur || 0)) { if (p.pose === 'fall') { p.getupT = 0.32; p.animT = 0; } p.state = 'idle'; p.pose = null; } }
+      // the whistle on a flag pull comes a beat after the rip, once the official has seen it
+      if (!this.lateWhistle && this.result && (this.result.type === 'pull' || this.result.type === 'sack') && this.deadT > 0.3) { this.lateWhistle = true; this.sfxQ('whistle'); }
+      for (const p of this.players) {
+        p.stateT += dt; p.showFlag -= dt; p.whistle -= dt;
+        if (p.hurt) { p.pose = 'fall'; p.state = 'hurt'; continue; }   // an injured man stays down until the ambulance has him
+        if (p.kneel && p.state !== 'stumble' && !(p.getupT > 0)) { p.pose = 'kneel'; continue; }   // taking a knee while the trainers work
+        if (p.state === 'stumble' && p.stateT > Math.max(0.5, p.stumbleDur || 0)) { if (p.pose === 'fall') { p.getupT = 0.32; p.animT = 0; } p.state = 'idle'; p.pose = null; }
+      }
       // celebrate/dejected hold; everyone else idles facing the ball
-      if (this.deadT > 0.25) for (const p of this.players) { if (p.getupT > 0) continue; if (!HOLD_DEAD.has(p.pose)) { if (p.pose !== 'catch' || p.stateT > 0.4) p.pose = 'idle'; } if (p.pose === 'hold' && p.stateT > 1.2) p.pose = 'idle'; }
+      if (this.deadT > 0.25) for (const p of this.players) { if (p.getupT > 0 || p.hurt || (p.kneel && p.pose === 'kneel')) continue; if (!HOLD_DEAD.has(p.pose)) { if (p.pose !== 'catch' || p.stateT > 0.4) p.pose = 'idle'; } if (p.pose === 'hold' && p.stateT > 1.2) p.pose = 'idle'; }
+    }
+    // the ambulance bumper: a man in its way goes down (a stumble that ends in a fall, then he gets up as usual)
+    knockDown(p, dx, dy) {
+      if (p.hurt || p.state === 'stumble') return false;
+      this.setState(p, 'stumble'); p.pose = 'fall'; p.stateT = 0; p.stumbleDur = 1.1; p.animT = 0;
+      p.x = FF.clamp(p.x + dx, -3, F.FW + 3); p.y = FF.clamp(p.y + dy, -2, F.FL + 2); p.vx = p.vy = 0;
+      this.sfxQ('thump'); this.sfxQ('oof'); return true;
     }
 
     /* --------------------------------------------- kinematics/anim */
@@ -6165,6 +6307,7 @@ FF.Game = (function () {
       this.events = []; this.sfx = []; this.messages = [];
       this.starXP = 0; this.xpLog = []; this.playsRun = 0; this.drives = 0;
       this.ot = null; this.receivedFirst = null; this.paused = false;
+      this.injured = []; this.pendingInjury = null; this.injury = null;   // players carted off this game (roster ids)
       this.coin = { t: 0, result: null, choice: null, winner: null, phase: 'call' };
       // a broadcast-style pregame card before the toss (skipped for the title demo, practice and simulated games)
       this.state = (this.mode === 'demo' || this.mode === 'practice' || this.mode === 'training' || this.practice || this.fast) ? 'cointoss' : 'pregame';
@@ -6196,6 +6339,12 @@ FF.Game = (function () {
       // five starters; the superstar replaces the starter at his position
       const team = this.teams[teamIdx];
       let five = team.roster.slice(0, 5);
+      // an injured starter gives way to the bench: a man at his position if one is healthy, otherwise whoever is left
+      if (this.injured && this.injured.length) {
+        const out = new Set(this.injured);
+        const bench = team.roster.slice(5).filter(p => !out.has(p.id));
+        five = five.map(p => { if (!out.has(p.id)) return p; let i = bench.findIndex(b => b.pos === p.pos); if (i < 0) i = 0; return i < bench.length ? bench.splice(i, 1)[0] : p; });
+      }
       if (this.star && this.star.teamIdx === teamIdx) {
         const s = this.star.info;
         let idx = five.findIndex(p => p.pos === s.pos); if (idx < 0) idx = 4;
@@ -6228,6 +6377,7 @@ FF.Game = (function () {
         case 'play': this.updatePlay(dt, input); break;
         case 'result': this.updateResult(dt, input); break;
         case 'swing': this.updateSwing(dt, input); break;
+        case 'injury': this.updateInjury(dt, input); break;
         case 'conversion': this.updateConversion(dt, input); break;
         case 'halftime': if (input.pressed('START') || input.pressed('A') || (this.mode === 'demo' && this.stateT > 4) || (this.fast)) this.startHalf(2); break;
         case 'otchoice': this.updateConversion(dt, input); break;
@@ -6520,6 +6670,7 @@ FF.Game = (function () {
       const s = this.sim, r = s.result;
       this.lastResult = r;
       this.playClock = 30;
+      this.pendingInjury = this.rollInjury(s, r);
       if (r.type === 'sack' || r.type === 'safety') this.cam.shake = 0.3;
       const offIdx = this.possession, defIdx = 1 - this.possession;
       const ts = this.teamStats[offIdx];
@@ -6798,6 +6949,7 @@ FF.Game = (function () {
       if (this.stateT > (this.mode === 'demo' ? 2.2 : 2.6) || skip || this.fast) {
         if (this.stateT < minT && !this.fast) return;
         this.banner = null;
+        if (this.pendingInjury && this.sim) { this.startInjury(); return; }
         if (!this.fast && !this.practice && !this.swing && this.sim) { this.startSwing(); return; }
         this.swing = null;
         if (this.practice) { // practice: same spot every snap, nothing else changes
@@ -6812,6 +6964,107 @@ FF.Game = (function () {
         if (this.clock <= 0) { this.endHalf(); return; }
         this.beginPlaycall();
       }
+    }
+
+    /* ------------------------------------------------- injuries */
+    // Rolled when the ball is dead: the carrier whose flag came off at speed, or anyone who went down hard, can be
+    // hurt - rarely (about one man a game at the ON setting). The superstar is never hurt: it is his career and his
+    // game to play. Nothing is rolled in simulated, demo or practice games, on scores, or when the bench is empty.
+    rollInjury(s, r) {
+      const st = this.settings.injuries || 'on';
+      if (st === 'off' || this.fast || this.mode === 'demo' || this.practice || this.conversion || !s || !r || r.type === 'td' || r.penaltyPre) return null;
+      const rate = (st === 'rare' ? 0.35 : 1) * (FF.debugInjury ? 80 : 1);
+      const cands = [];
+      const c = r.carrier;
+      if (c && r.puller && (r.type === 'pull' || r.type === 'sack' || r.type === 'safety')) cands.push([c, (c.pulledSpeed || 0) > 4.2 ? 2.2 : 1]);
+      for (const p of s.players) if (p !== c && p.pose === 'fall') cands.push([p, 1.5]);
+      for (const [p, w] of cands) {
+        const teamIdx = this.teams.indexOf(p.teamRef); if (teamIdx < 0) continue;
+        if (this.star && (p.info === this.star.info || p.info.id === this.star.info.id)) continue;
+        const out = new Set(this.injured); if (!this.teams[teamIdx].roster.slice(5).some(b => !out.has(b.id))) continue;
+        if (!rnd.chance(0.0085 * w * rate)) continue;
+        p.hurt = true; p.pulledBy = null; p.getupT = 0; p.hurdleT = 0; p.pose = 'fall'; p.state = 'hurt'; p.stateT = 0.9; p.hasBall = false;
+        return { p, teamIdx };
+      }
+      return null;
+    }
+    startInjury() {
+      const inj = this.pendingInjury; this.pendingInjury = null;
+      const p = inj.p, s = this.sim, team = this.teams[inj.teamIdx];
+      const dir = p.x >= F.FW / 2 ? 1 : -1;                       // in from the far side, so it crosses the whole field
+      const van = { x: dir > 0 ? -10 : F.FW + 10, y: FF.clamp(p.y + 1.4, 1, F.FL - 1), dir, speed: 0, t: 0, odo: 0, shadow: 54, bob: 0,
+        draw: (x, pr, ss, cam, t) => { const sp = FF.sprites.ambulance(Math.floor(van.t * 8) % 2, Math.floor(van.odo * 2) % 2, dir < 0); const w = Math.round(FF.sprites.AMB_W * 1.35 * ss), h = Math.round(FF.sprites.AMB_H * 1.35 * ss); x.drawImage(sp, Math.round(pr.x - w / 2), Math.round(pr.y - h + 3 * ss + van.bob), w, h); } };
+      const stopX = p.x + dir * 2.9;                               // the rear doors pull up beside him
+      this.injury = { p, team, teamIdx: inj.teamIdx, van, stopX, phase: 'kneel', t: 0, loadT: 0, from: [p.x, p.y] };
+      s.extras = [van];
+      // everyone nearby gathers round him and takes a knee - right in the ambulance's lane, as it happens
+      const near = s.players.filter(q => q !== p && !q.hurt && FF.dist(q.x, q.y, p.x, p.y) < 14).sort((a, b) => FF.dist(a.x, a.y, p.x, p.y) - FF.dist(b.x, b.y, p.x, p.y));
+      near.forEach((q, i) => { const a = i / Math.max(1, near.length) * Math.PI * 2 + 0.5, r = 1.6 + (i % 2) * 0.8; q.gather = [FF.clamp(p.x + Math.cos(a) * r, 0.5, F.FW - 0.5), FF.clamp(p.y + Math.sin(a) * r, 0.5, F.FL - 0.5)]; q.kneel = false; });
+      const ln = p.info.name.split(' ').slice(-1)[0];
+      const sub = this.lineupSub(inj.teamIdx, p.info);
+      this.showBanner(['INJURY', ln + ' (' + p.info.pos + ') IS DOWN'], 'penalty', 'OUT FOR THE GAME', FF.rng.pick(['HE IS NOT GETTING UP', 'THEY ARE WAVING FOR THE AMBULANCE', 'THAT ONE LOOKED BAD', 'THE TRAINERS ARE OUT THERE', sub ? sub.name.split(' ').slice(-1)[0] + ' WILL HAVE TO STEP IN' : 'A THIN BENCH JUST GOT THINNER']));
+      this.sfx.push('ooh'); FF.audio.hype(0.15, 1.5);
+      this.setState('injury');
+    }
+    // who comes in for an injured man (for the banner): the lineup after the swap, minus the lineup before it
+    lineupSub(teamIdx, info) {
+      const before = this.lineup(teamIdx); this.injured.push(info.id); const after = this.lineup(teamIdx); this.injured.pop();
+      return after.find(p => !before.includes(p)) || null;
+    }
+    updateInjury(dt, input) {
+      const I = this.injury, van = I.van, s = this.sim, p = I.p, dir = van.dir;
+      if (!I || !s) { this.setState('result'); return; }
+      I.t += dt; van.t += dt; if (this.banner) this.banner.t += dt;
+      s.update(dt, input);
+      const audio = FF.audio;
+      // the gathering: walk to the spot, then kneel facing him
+      let gathering = false;
+      for (const q of s.players) if (q.gather) {
+        gathering = true;
+        if (s.moveToward(q, q.gather[0], q.gather[1], 0.55) || I.t > 2.2) { q.x = q.gather[0]; q.y = q.gather[1]; q.vx = q.vy = 0; q.wantSpeed = 0; q.wantDir = [0, 0]; q.gather = null; q.kneel = true; q.pose = 'kneel'; q.facing = F.dirFrom(p.x - q.x, p.y - q.y) || q.facing; }
+      }
+      if (I.phase === 'kneel') {
+        if (I.t > 0.35 && !I.siren) { I.siren = true; audio.loopStart('siren'); audio.loopStart('engine'); audio.loopSet('siren', 0.45); }
+        if (I.t > 0.8 && (!gathering || I.t > 2.3)) { I.phase = 'enter'; audio.loopSet('siren', 1); }
+      } else if (I.phase === 'enter') {
+        van.speed = Math.min(14, van.speed + dt * 24);
+        const dx = dir * van.speed * dt; van.x += dx; van.odo += Math.abs(dx); van.bob = Math.floor(van.odo * 3) % 2 ? -1 : 0;
+        // the bumper: anyone standing in the lane goes down and gets shoved aside
+        const front = van.x + dir * 3.1;
+        for (const q of s.players) if (!q.hidden && q !== p && Math.abs(q.y - van.y) < 1.7 && (dir > 0 ? (q.x < front && q.x > van.x - 3.3) : (q.x > front && q.x < van.x + 3.3))) { q.kneel = false; q.gather = null; if (s.knockDown(q, dir * 1.8, (q.y >= van.y ? 1 : -1) * 1.3)) this.cam.shake = Math.max(this.cam.shake, 0.12); }
+        if (dir > 0 ? van.x >= I.stopX : van.x <= I.stopX) { van.x = I.stopX; van.speed = 0; van.bob = 0; I.phase = 'load'; I.loadT = 0; audio.loopSet('engine', 0.6); }
+      } else if (I.phase === 'load') {
+        I.loadT += dt;
+        if (I.loadT > 0.15 && !I.doors) { I.doors = true; this.sfx.push('doors'); }
+        // the man slides onto the stretcher and into the back; the crowd gives him a hand on the way
+        const u = FF.clamp((I.loadT - 0.4) / 0.6, 0, 1), e = u * u * (3 - 2 * u);
+        const rx = van.x - dir * 2.4, ry = van.y;
+        p.x = FF.lerp(I.from[0], rx, e); p.y = FF.lerp(I.from[1], ry, e);
+        if (u >= 1 && !p.hidden) { p.hidden = true; this.sfx.push('doors'); this.sfx.push('applause'); FF.audio.hype(0.35, 1.2); }
+        if (I.loadT > 1.45) { I.phase = 'exit'; this.sfx.push('horn'); audio.loopSet('engine', 1); }
+      } else if (I.phase === 'exit') {
+        van.speed = Math.min(15, van.speed + dt * 18);
+        const dx = dir * van.speed * dt; van.x += dx; van.odo += Math.abs(dx); van.bob = Math.floor(van.odo * 3) % 2 ? -1 : 0;
+        const front = van.x + dir * 3.1;
+        for (const q of s.players) if (!q.hidden && q !== p && Math.abs(q.y - van.y) < 1.7 && (dir > 0 ? (q.x < front && q.x > van.x - 3.3) : (q.x > front && q.x < van.x + 3.3))) { q.kneel = false; q.gather = null; if (s.knockDown(q, dir * 1.8, (q.y >= van.y ? 1 : -1) * 1.3)) this.cam.shake = Math.max(this.cam.shake, 0.12); }
+        const gone = dir > 0 ? van.x > F.FW + 13 : van.x < -13;
+        if (van.x > F.FW + 6 || van.x < -6) audio.loopSet('siren', 0.5);
+        if (gone) this.finishInjury();
+      }
+      F.updateCameraX(this.cam, I.phase === 'load' ? p.x : van.x, dt);
+      if (I.phase !== 'kneel' && this.stateT > 0.8 && (input.pressed('START') || input.pressed('A') || input.pressed('B'))) this.finishInjury();
+    }
+    finishInjury() {
+      const I = this.injury; if (!I) return; this.injury = null;
+      const s = this.sim, p = I.p;
+      FF.audio.loopStop('siren', 0.6); FF.audio.loopStop('engine', 0.4);
+      p.hidden = true; if (s) { s.extras = null; for (const q of s.players) { q.gather = null; q.wantSpeed = 0; if (q.kneel) { q.kneel = false; q.pose = 'idle'; } } }
+      this.injured.push(p.info.id);
+      const starters = I.team.roster.slice(0, 5).map(q => q.id);
+      const sub = this.lineup(I.teamIdx).find(q => !starters.includes(q.id) && !(this.star && q.id === this.star.info.id));
+      this.msg(p.info.name.split(' ').slice(-1)[0] + ' IS OUT FOR THE GAME' + (sub ? ' - ' + sub.name.split(' ').slice(-1)[0] + ' COMES IN' : ''), 3);
+      this.banner = null;
+      this.startSwing();
     }
 
     /* ------------------------------------------- camera swing */
@@ -6995,8 +7248,10 @@ FF.Game = (function () {
       else if (this.state === 'halftime') FF.ui.drawStats(x, this, 'HALFTIME', t);
       else if (this.state === 'final') FF.ui.drawStats(x, this, 'FINAL', t);
       else if (this.state === 'swing' && s) {
-        F.drawField(x, this.cam, F.MAIN_VP, this.teams, this.possession, null, t);
+        // the scoreboard stays up through the swing (it turns with the stands); the field markers are gone, the play is over
+        F.drawField(x, this.cam, F.MAIN_VP, this.teams, this.possession, { board: { t0: this.teams[0].id, t1: this.teams[1].id, s0: this.score[0], s1: this.score[1], clock: this.practice ? 'PRACTICE' : (this.ot ? 'OT ' : 'H' + this.half + ' ') + FF.fmtClock(this.clock) } }, t);
         F.drawActors(x, s, this.cam, F.MAIN_VP, t);
+        FF.stadium.drawWeather(x, F.MAIN_VP, t, this.cam);
         const u = Math.min(1, this.swing.t / this.swing.dur);
         if (u > 0.7) { x.fillStyle = 'rgba(0,0,0,' + ((u - 0.7) / 0.3).toFixed(2) + ')'; x.fillRect(0, 0, W, H); }
       }
@@ -8345,6 +8600,7 @@ FF.touch = (function () {
       case 'result': return { name: 'result', buttons: g.canReplay && g.canReplay() ? ['MENU', 'REP'] : ['MENU'], tapIs: 'A' };
       case 'replay': return { name: 'replay', buttons: ['DONE', 'CAM', 'SPD'], pad: pad(['PAUSE', 'A'], null, null, null, false), stick: 'scrub' };
       case 'swing': return { name: 'swing', buttons: [] };
+      case 'injury': return { name: 'injury', buttons: ['MENU'], tapIs: 'A' };   // a tap skips the ambulance
       case 'play': {
         if (g.retro) {   // RETRO SIDELINE / OVERHEAD: one finger does the play; the pad keeps its place
           if (!s || !s.humanSide) return { name: 'watch', buttons: s && s.phase === 'presnap' ? ['MENU', 'ART'] : ['MENU'], pad: pad(['SKIP', 'A']) };
@@ -8790,8 +9046,51 @@ FF.audio = (function () {
   setInterval(crowdTick, 60);
   function setCrowd(on) { crowdOn = on; if (on) crowdStart(); else crowdStop(); }
 
+  // ---- player voices: a short buzzy "vowel" (a sawtooth sliding down through a band-pass formant) with a breath of
+  // noise on top; every call lands on a slightly different pitch so a pile of grunts does not sound like one sample
+  function voice(t, f0, f1, dur, vol, formant, q) {
+    const k = 0.88 + Math.random() * 0.24;
+    const o = ac.createOscillator(), g = ac.createGain(), bp = ac.createBiquadFilter();
+    o.type = 'sawtooth'; o.frequency.setValueAtTime(f0 * k, t); o.frequency.exponentialRampToValueAtTime(Math.max(30, f1 * k), t + dur);
+    bp.type = 'bandpass'; bp.frequency.value = (formant || 650) * (0.94 + Math.random() * 0.12); bp.Q.value = q || 1.6;
+    o.connect(bp); bp.connect(g); g.connect(sfxGain);
+    env(g, t, 0.012, dur * 0.35, 0.45, dur * 0.65, vol);
+    o.start(t); o.stop(t + dur + 0.05);
+    noise(t, dur * 0.6, vol * 0.5, 500, 2600);
+  }
+  // ---- held sounds (the ambulance): started and stopped by name, with their own gain so they can fade
+  const loops = {};
+  function loopStart(name) {
+    if (!ac || !FF.settings.sfx || loops[name]) return;
+    const g = ac.createGain(); g.gain.value = 0.0001; g.connect(sfxGain); const nodes = [];
+    const t = ac.currentTime;
+    if (name === 'siren') {   // a wail: one tone swept up and down about once a second, a fifth above it for the edge
+      for (const [mul, vol] of [[1, 0.16], [1.5, 0.05]]) { const o = ac.createOscillator(), og = ac.createGain(); o.type = 'square'; o.frequency.value = 700 * mul; og.gain.value = vol; const lfo = ac.createOscillator(), lg = ac.createGain(); lfo.type = 'triangle'; lfo.frequency.value = 0.55; lg.gain.value = 260 * mul; lfo.connect(lg); lg.connect(o.frequency); o.connect(og); og.connect(g); o.start(t); lfo.start(t); nodes.push(o, lfo); }
+    } else if (name === 'engine') {   // a diesel idle: a low sawtooth through a low-pass, with a slow throb
+      const o = ac.createOscillator(), f = ac.createBiquadFilter(), og = ac.createGain(); o.type = 'sawtooth'; o.frequency.value = 52; f.type = 'lowpass'; f.frequency.value = 180; og.gain.value = 0.5;
+      const lfo = ac.createOscillator(), lg = ac.createGain(); lfo.type = 'sine'; lfo.frequency.value = 9; lg.gain.value = 0.18; lfo.connect(lg); lg.connect(og.gain);
+      o.connect(f); f.connect(og); og.connect(g); o.start(t); lfo.start(t); nodes.push(o, lfo);
+    } else return;
+    g.gain.setTargetAtTime(1, t, 0.25);
+    loops[name] = { g, nodes };
+  }
+  function loopSet(name, level) { const L = loops[name]; if (L && ac) L.g.gain.setTargetAtTime(Math.max(0.0001, level), ac.currentTime, 0.15); }
+  function loopStop(name, fade) {
+    const L = loops[name]; if (!L) return; delete loops[name];
+    try { L.g.gain.setTargetAtTime(0.0001, ac.currentTime, fade || 0.3); setTimeout(() => { for (const n of L.nodes) { try { n.stop(); } catch (e) { } } }, (fade || 0.3) * 4000); } catch (e) { }
+  }
+
   const SFX = {
     hut: t => { noise(t, 0.12, 0.5, 400, 3000); tone('square', 140, 90, t, 0.12, 0.25); },
+    cadence: t => { voice(t, 150, 120, 0.16, 0.22, 500, 1.4); voice(t + 0.42, 170, 140, 0.14, 0.26, 620, 1.4); },   // "DOWN ... SET"
+    oof: t => { voice(t, 150, 70, 0.22, 0.42, 520, 1.8); tone('sine', 80, 40, t, 0.12, 0.3); },                       // the wind knocked out of him
+    ugh: t => { voice(t, 190, 110, 0.18, 0.36, 700, 1.5); },                                                           // a carrier losing his flag
+    grunt: t => { voice(t, 220, 160, 0.11, 0.3, 800, 1.3); },                                                          // effort: a hurdle, a leap, a dive
+    thump: t => { tone('sine', 70, 35, t, 0.16, 0.6); noise(t, 0.1, 0.45, 80, 700); },                                  // a body hitting the turf (or a bumper)
+    doors: t => { noise(t, 0.06, 0.4, 600, 4000); tone('square', 180, 120, t + 0.02, 0.07, 0.18); noise(t + 0.32, 0.08, 0.45, 300, 3000); tone('square', 140, 90, t + 0.34, 0.08, 0.2); },
+    horn: t => { tone('square', 330, 330, t, 0.35, 0.18); tone('square', 415, 415, t, 0.35, 0.14); },
+    applause: t => { for (let i = 0; i < 14; i++) { const d = i * 0.09 + Math.random() * 0.04; noise(t + d, 0.05, 0.22 + Math.random() * 0.12, 700, 5000); } noise(t, 1.4, 0.16, 400, 3000); },
+    ooh: t => { noise(t, 0.7, 0.3, 250, 900); tone('sine', 260, 200, t, 0.6, 0.1); tone('sine', 330, 250, t + 0.02, 0.6, 0.06); },   // the crowd winces
     whistle: t => {   // a real referee whistle: two close tones with a fast trill
       for (let i = 0; i < 2; i++) { const o = ac.createOscillator(), g = ac.createGain(), v = ac.createOscillator(), vg = ac.createGain(); o.type = 'square'; o.frequency.value = i ? 2960 : 2260; v.type = 'sine'; v.frequency.value = 38; vg.gain.value = 90; v.connect(vg); vg.connect(o.frequency); o.connect(g); g.connect(sfxGain); env(g, t, 0.01, 0.1, 0.7, 0.3, 0.1); o.start(t); v.start(t); o.stop(t + 0.5); v.stop(t + 0.5); }
     },
@@ -8894,7 +9193,7 @@ FF.audio = (function () {
   }
   function stopMusic() { if (musicTimer) { clearInterval(musicTimer); musicTimer = null; } musicName = null; family = null; }
   function applySettings() { if (!FF.settings.music && musicTimer) { clearInterval(musicTimer); musicTimer = null; } else if (FF.settings.music && family && !musicTimer && ac) { const n = family; family = null; music(n); } }
-  return { unlock, play, music, next, stopMusic, applySettings, setCrowd, hype, get ready() { return !!ac; }, get song() { return musicName; } };
+  return { unlock, play, music, next, stopMusic, applySettings, setCrowd, hype, loopStart, loopSet, loopStop, get ready() { return !!ac; }, get song() { return musicName; } };
 })();
 
 </script>
@@ -9685,6 +9984,7 @@ FF.legends = (function () {
         ['QB CAN RUN', { never: 'NEVER', rusher: 'ONCE RUSHER CROSSES', always: 'ALWAYS' }[s.qbRun || 'always'], v => { const o = ['never', 'rusher', 'always']; s.qbRun = o[FF.clamp(o.indexOf(s.qbRun || 'always') + v, 0, 2)]; }],
         ['AUTO FLAG PULL', s.autoPull ? 'ON' : 'OFF', () => { s.autoPull = !s.autoPull; }, 'classic'],
         ['AUTO SWITCH ON PASS', s.autoSwitch === false ? 'OFF' : 'ON', () => { s.autoSwitch = s.autoSwitch === false; }],
+        ['INJURIES', { on: 'ON', rare: 'RARE', off: 'OFF' }[s.injuries || 'on'], v => { const o = ['on', 'rare', 'off']; s.injuries = o[(o.indexOf(s.injuries || 'on') + v + 3) % 3]; }],
         ['TIME OF DAY', { auto: 'VARIES', day: 'DAY', dusk: 'DUSK', night: 'NIGHT' }[s.timeOfDay || 'auto'], v => { const o = ['auto', 'day', 'dusk', 'night']; s.timeOfDay = o[(o.indexOf(s.timeOfDay || 'auto') + v + 4) % 4]; }],
         ['WEATHER', { auto: 'VARIES', clear: 'CLEAR', rain: 'RAIN', snow: 'SNOW' }[s.weather || 'auto'], v => { const o = ['auto', 'clear', 'rain', 'snow']; s.weather = o[(o.indexOf(s.weather || 'auto') + v + 4) % 4]; }],
         ['CONTROL HINTS', s.hints === false ? 'OFF' : 'ON', () => { s.hints = s.hints === false; }],
@@ -9950,7 +10250,7 @@ FF.legends = (function () {
       if (args.mode === 'practice' || args.mode === 'training') { this.game.coin.phase = 'auto'; this.game.practice = true; this.game.humanBoth = true; }
       this.quitArmed = false;
     },
-    exit() { FF.audio.setCrowd(false); },
+    exit() { FF.audio.setCrowd(false); FF.audio.loopStop('siren', 0.2); FF.audio.loopStop('engine', 0.2); },
     finished(g) {
       if (this.args.mode === 'superstar') { FF.store.useStarTrial(); FF.go('postgame', { game: g, career: this.args.career }); }
       else if (this.args.mode === 'training') FF.go('trainingResult', { game: g });
