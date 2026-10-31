@@ -125,14 +125,17 @@ Rebuild the sheet with `cd tools/prerender && npm install && node render.js` (ne
 
 ## v0.38 — the ambulance, the turnaround, and the whistle
 - **Injuries, and the ambulance.** A man whose flag comes off at speed, or anyone who goes down hard, can be hurt
-  (about one every other game at the default setting; RARE and OFF in the options). He stays down, the nearest
-  players walk over and take a knee around him, and the ambulance comes in from the far sideline - through the
-  kneeling players, who go flying - pulls up with its rear doors beside him, loads him, honks, and drives off
-  through whoever got up too early. The crowd gives him a hand on the way out. He is out for the game: a bench man
-  at his position comes in (any bench man if none is left), and the banner says who. A tap (or A / START) skips the
-  scene. Your Superstar is never hurt - it is his career and his game to play; his teammates and opponents are
-  fair game. The ambulance is original art (no cross, no star, no real service's markings), the siren and engine
-  are synthesized like every other sound in the game, and nothing is rolled in simulated, demo or practice games.
+  (about one every other game at the default setting; RARE and OFF in the options). He stays down where he fell,
+  everyone else stands where the whistle left him, and the ambulance comes in from the bottom corner of the screen,
+  drives diagonally across the field through whoever is standing in its way - they are thrown clear and go down -
+  pulls up with its rear doors beside him, loads him, honks, and swings round to leave diagonally off the bottom of
+  the screen (never through the walls or the stands). The crowd gives him a hand on the way out. He is out for the
+  game: a bench man at his position comes in (any bench man if none is left), and the banner says who. A tap (or
+  A / START) skips the scene. Your Superstar is never hurt - it is his career and his game to play; his teammates
+  and opponents are fair game. The ambulance is a box-built 3D model rendered through the same camera as the player
+  sprites (tools/prerender/props.js: eight facings, two light-bar states, cel-shaded and outlined) - original art,
+  no cross or star emblem, no real service's markings - and the siren and engine are synthesized like every other
+  sound in the game. Nothing is rolled in simulated, demo or practice games.
 - **The camera turnaround.** The stands, the walls, the ad boards and the scoreboard all turn with the field now.
   The crowd was a flat tiled patch during the swing and the end wall was drawn as a screen-horizontal strip, which
   is why the boards floated off the end zone when a play ended near it. The turned camera runs the same per-scanline
